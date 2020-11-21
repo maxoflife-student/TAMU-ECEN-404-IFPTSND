@@ -77,7 +77,6 @@ class Graph_Entities():
                 relations_dict = json.load(read_file)
                 return relations_dict
 
-
         elif len(relation_file) == 0:
             print('Directory does not contain an entity relationship .json file')
 
@@ -157,13 +156,32 @@ class Graph_Entities():
         self.n_range = n_range
 
         # Create some colors for the graphed lines to cycle through
-        colors_list = ['f30000', 'f38c00', 'edf300', '7af300', '00f3ce', '0076f3', '9700f3', 'f300c3', '990000',
-                       'd08800', '05aa00', '00a0aa', '7600aa']
+        colors_list = ['f30000', 'f38c00', 'FDD20E', '72e400', '00e4c1', '0076f3', '9700f3', 'f300c3', '990000',
+                       'd08800', '05aa00', '00a0aa', '7600aa', '830000', 'f38c00', '995900', '7e6701', '264d00',
+                       '004d41', '003166', '800066']
         colors_list = [f'#{i}' for i in colors_list]
         tmp = list(colors_list)
-        for i in range(20):
+        for i in range(4):
             for color in tmp:
                 colors_list.append(color)
+
+        # Insert the black color used on the selected entity
+        colors_list.insert(0, '#000000')
+
+        # Create distinctions between the colors
+        line_styles = []
+        # Account for the added one black at the end
+        n = len(colors_list) - 1
+        n4 = int(n/4)
+        for i in range(n):
+            if i < n4:
+                line_styles.append('solid')
+            elif n4 < i < 2*n4:
+                line_styles.append('dashed')
+            elif 2*n4 < i < 3*n4:
+                line_styles.append('dotted')
+            else:
+                line_styles.append('dash_dotted')
 
         # There will always be one entity selected, so it sets the X-axis
         ent_df = pd.read_csv(self.path + '\\' + self.sel_ent + ".csv")
@@ -173,8 +191,13 @@ class Graph_Entities():
         if not self.show_rel:
             y_data = ent_df[ent_df.columns[self.feature_key[self.sel_feature]]].values
         else:
-            # Key names for the legned
+            # Key names to be displayed
             keys = self._return_neighbors(self.sel_ent)
+            # Remove the the main key we're looking for
+            keys.remove(self.sel_ent)
+            # Add it back to the front of the list so it's always displayed
+            keys.insert(0, self.sel_ent)
+
             # List of DataFrames containing all the entities related to each other
             list_of_dfs = [pd.read_csv(self.path + '\\' + entity + ".csv") for entity in keys]
             # List of values from those DataFrames
@@ -192,14 +215,23 @@ class Graph_Entities():
         else:
             n_range_of_entities = list(range(len(values)))[n_range[0]:n_range[1]]
             n_range_of_entities.insert(0, 0)
+
+            # Line settings for all neighbors
             line = [Lines(labels=[keys[i]], x=x_data, y=values[i], scales={'x': x_scale, 'y': y_scale},
-                          colors=[colors_list[i]], display_legend=True) for i in n_range_of_entities]
+                          colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in n_range_of_entities[1:]]
+
+            # Line settings for the selected entity
+            line.insert(0, Lines(labels=[keys[0]], x=x_data, y=values[0], scales={'x': x_scale, 'y': y_scale},
+                                 colors=[colors_list[0]], display_legend=True, stroke_width=6))
+            print('Test')
 
         fig = Figure(marks=line, axes=[ax_x, ax_y], title='Value of Entity(s) Over Time', colors=['red'],
                      legend_location='top-left')
         fig.layout.height = '850px'
         toolbar = Toolbar(figure=fig)
         display(fig, toolbar)
+
+    '''This is the method to call to display the Ipywidgets and Graph'''
 
     def display_entities(self):
         # Create a dropdown menu to select which entity you would like to view
@@ -248,7 +280,7 @@ class Graph_Entities():
             )
 
             n_range = widgets.IntRangeSlider(
-                value=[0, 5],
+                value=[1, 1],
                 min=1,
                 max=len(self._return_neighbors(sel_ent)),
                 step=1,
