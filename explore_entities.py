@@ -161,7 +161,7 @@ class Graph_Entities():
                        '004d41', '003166', '800066']
         colors_list = [f'#{i}' for i in colors_list]
         tmp = list(colors_list)
-        for i in range(4):
+        for i in range(3):
             for color in tmp:
                 colors_list.append(color)
 
@@ -174,11 +174,11 @@ class Graph_Entities():
         n = len(colors_list) - 1
         n4 = int(n/4)
         for i in range(n):
-            if i < n4:
+            if i <= n4:
                 line_styles.append('solid')
-            elif n4 < i < 2*n4:
+            elif n4 < i <= 2*n4:
                 line_styles.append('dashed')
-            elif 2*n4 < i < 3*n4:
+            elif 2*n4 < i <= 3*n4:
                 line_styles.append('dotted')
             else:
                 line_styles.append('dash_dotted')
@@ -194,7 +194,11 @@ class Graph_Entities():
             # Key names to be displayed
             keys = self._return_neighbors(self.sel_ent)
             # Remove the the main key we're looking for
-            keys.remove(self.sel_ent)
+            try:
+                keys.remove(self.sel_ent)
+            except ValueError:
+                None
+
             # Add it back to the front of the list so it's always displayed
             keys.insert(0, self.sel_ent)
 
@@ -218,7 +222,7 @@ class Graph_Entities():
 
             # Line settings for all neighbors
             line = [Lines(labels=[keys[i]], x=x_data, y=values[i], scales={'x': x_scale, 'y': y_scale},
-                          colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in n_range_of_entities[1:]]
+                          colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in n_range_of_entities[2:]]
 
             # Line settings for the selected entity
             line.insert(0, Lines(labels=[keys[0]], x=x_data, y=values[0], scales={'x': x_scale, 'y': y_scale},
@@ -244,6 +248,10 @@ class Graph_Entities():
         def _sel_feature(sel_ent):
             # Declare as a class variables
             self.sel_ent = sel_ent
+
+            num_of_neighbors = len(self._return_neighbors(sel_ent)) - 1
+            if num_of_neighbors == -1:
+                num_of_neighbors = 0
 
             # Load in the data for the selected entity
             ent_df = pd.read_csv(self.path + '\\' + self.sel_ent + ".csv")
@@ -280,8 +288,8 @@ class Graph_Entities():
             )
 
             n_range = widgets.IntRangeSlider(
-                value=[1, 1],
-                min=1,
+                value=[0, 0],
+                min=0,
                 max=len(self._return_neighbors(sel_ent)),
                 step=1,
                 description='Neighbors:',
@@ -294,7 +302,7 @@ class Graph_Entities():
 
             show_rel = widgets.Checkbox(
                 value=False,
-                description='Show Neighbors',
+                description=f'Show Neighbors ({num_of_neighbors})',
                 disabled=False,
             )
 
