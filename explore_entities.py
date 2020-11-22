@@ -17,6 +17,7 @@ from bqplot import (
 )
 
 import json
+import pickle
 
 # Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
 import warnings
@@ -71,6 +72,7 @@ class Graph_Entities():
 
         else:
             sys.exit('There are multiple .json files in the directory, remove all or leave 1')
+
 
     '''Given a list of entities, return a list of their values averaged over the time-period'''
     '''Will be useful in detecting when a Neighboring Group moves NOT in accordance with the average'''

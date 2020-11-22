@@ -1,5 +1,8 @@
 import datetime
+import pickle
 import sys
+import os
+from os.path import join, isfile
 
 import numpy as np
 import pandas as pd
@@ -53,6 +56,9 @@ def rank_loss_func(alpha=1):
             )
         )
 
+        # Divide the rank_loss by the total time-steps to equalize loss if the given time-steps are different
+        rank_loss = tf.divide(rank_loss, tf.constant(y_actual.shape[1], dtype=tf.float32))
+
         # Take the squared difference between the y_actual and y_pred
         squared_difference = math_ops.squared_difference(y_actual, y_pred)
         # Average each of values, taking the magnitude
@@ -76,27 +82,42 @@ class Ein_Multiply(tf.keras.layers.Layer):
 
 
 # Create a function for the Tensorflow implementation of Tensorflow 2
-def leaky_relu():
-    return lambda x: tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+def leaky_relu(x):
+    return tf.keras.layers.LeakyReLU(alpha=0.2)(x)
 
 
 class TF_Models(Graph_Entities):
-    def __init__(self, data_path, models_path):
+    def __init__(self, data_path, models_path, reload=False):
         self.data_path = data_path
         self.models_path = models_path
 
-        # Re-use the methods from explore_entities
-        self.entities, self.entities_idx = super()._generate_list_of_entities(data_path)
-        # self.relations_dict = super()._generate_relations()
-        # self.Normalized_Adjacency_Matrix = super()._generate_normalized_ajacency_matrix()
+        if not reload:
+            self.load_obj = self.load_data_and_labels()
+        else:
+            self.load_obj = None
 
-        self.XX_tf = self._load_data_into_TF()
-        self.YY_tf = self._create_labels()
+        if self.load_obj is None:
+            # Re-use the methods from explore_entities
+            self.entities, self.entities_idx = super()._generate_list_of_entities(data_path)
+            self.relations_dict = super()._generate_relations()
+            self.Normalized_Adjacency_Matrix = super()._generate_normalized_ajacency_matrix()
+            self.XX_tf = self._load_data_into_TF()
+            self.YY_tf = self._create_labels()
+
+            self.save_data_and_labels()
+        else:
+            # If we've calculated this before, just load in a pickle file
+            self.entities = self.load_obj['entities']
+            self.entities_idx = self.load_obj['entities_idx']
+            self.relations_dict = self.load_obj['relations_dict']
+            self.Normalized_Adjacency_Matrix = self.load_obj['Normalized_Adjacency_Matrix']
+            self.XX_tf = self.load_obj['XX_tf']
+            self.YY_tf = self.load_obj['YY_tf']
 
         # Stores the last model affected in memory
         self.last_model = None
         self.epochs_n = None
-        self.tag_t = None
+        self.tag_t = ''
         self.loss_t = None
         self.date_t = None
         self.hidden_units = None
@@ -175,7 +196,7 @@ class TF_Models(Graph_Entities):
                 'x_val': x_val, 'y_val': y_val,
                 'x_test': x_test, 'y_test': y_test}
 
-    def generate_model(self, input_shape, model_type='lstm', gcn_shape=None, loss_function='mse', activation='relu',
+    def generate_model(self, model_type='lstm', gcn_shape=None, loss_function='mse', activation='relu',
                        learning_rate=1e-5, decay_rate=1e-6, hidden_units=64, true_random=False):
 
         # Ignore cuDDa warning messages
@@ -189,7 +210,7 @@ class TF_Models(Graph_Entities):
 
         '''Types of model inputs'''
         # Sequential Input Data
-        input_seq = keras.Input(shape=input_shape)
+        input_seq = keras.Input(shape=self.XX_tf.shape[1:])
         # Normalized Ajacency Matrix
         if gcn_shape is not None:
             input_rel = keras.Input(shape=gcn_shape)
@@ -203,34 +224,42 @@ class TF_Models(Graph_Entities):
         '''Custom Layers'''
         # Ein_Multiply
 
+        model = None
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
             x = LSTM_t(input_seq)
             x = LSTM_f(x)
             x = Dense_o(x)
             model = tf.keras.Model(inputs=[input_seq], outputs=x)
-
         # Two LSTM layers, One GCN Layer, One Dense Layer: (None, 1)
-        if model_type == 'lstm_gcn_1':
+        elif model_type == 'lstm_gcn_1':
             x = LSTM_t(input_seq)
             x = LSTM_f(x)
             x = Ein_Multiply()([input_rel, x])
             x = Dense_u(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq], outputs=x)
-            None
-
+            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         # Two LSTM layers, Two GCN Layers, One Dense Layer: (None, 1)
-        if model_type == 'lstm_gcn_2':
+        elif model_type == 'lstm_gcn_2':
             x = LSTM_t(input_seq)
             x = LSTM_f(x)
             x = Ein_Multiply()([input_rel, x])
             x = Dense_u(x)
             x = Ein_Multiply()([input_rel, x])
-            x = Dense_u(x)
+            x = Dense(hidden_units, activation=activation)(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq], outputs=x)
-
+            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+        elif model_type == 'lstm_gcn_3':
+            x = LSTM_t(input_seq)
+            x = LSTM_f(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense_u(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense_o(x)
+            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         else:
             sys.exit('You must specify a model type')
 
@@ -244,6 +273,7 @@ class TF_Models(Graph_Entities):
         self.last_model = model
         # Save the tags in memory for saving the file
         self.hidden_units = hidden_units
+        self.model_type = model_type
 
         # If the loss function is not a string, get its name directly
         if type(loss_function) is not str:
@@ -252,10 +282,30 @@ class TF_Models(Graph_Entities):
 
         return model
 
-    def train_model(self, model, x_train, y_train, x_val, y_val, epochs, gcn_matrix=None):
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min')
-        reduce_lr_plateau = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.8, patience=2, verbose=0,
-                                                                 mode='auto', min_delta=0.0001, cooldown=0, min_lr=0)
+    def train_model(self, model, x_train, y_train, x_val, y_val, epochs, gcn_matrix=None, learning_rate=1e-5):
+
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, mode='min')
+
+        def scheduler(epoch, lr):
+            return learning_rate
+
+        lr_schedule = tf.keras.callbacks.LearningRateScheduler(
+            scheduler, verbose=0
+        )
+
+        print(type(gcn_matrix))
+
+        # Experimental
+        # reduce_lr_plateau = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=0, verbose=0,
+        #
+        #                                                          mode='auto', min_delta=0.0001, cooldown=0, min_lr=0)
+        checkpoint_filepath = './tmp/checkpoint'
+        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=checkpoint_filepath,
+            save_weights_only=True,
+            monitor='val_loss',
+            mode='min',
+            save_best_only=True)
 
         inputs_train = [x_train]
         inputs_val = [x_val]
@@ -268,12 +318,37 @@ class TF_Models(Graph_Entities):
                   batch_size=x_train.shape[0],
                   epochs=epochs,
                   validation_data=(inputs_val, y_val),
-                  callbacks=[early_stopping, reduce_lr_plateau])  # Temporary removal of tensorboard while testing Colab
+                  callbacks=[early_stopping, model_checkpoint_callback, lr_schedule])  # Temporary removal of tensorboard while testing Colab
+
+        model.load_weights(checkpoint_filepath)
 
         self.epochs_n = epochs
         self.date_t = model_run_time = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
         self.last_model = model
+
         return model
 
-# A = TF_Models('./data_sets/NASDAQ_Cleaned', './models')
+    def save_model(self, model, tag=''):
+        model_name = f'{self.date_t}--{tag}--{self.epochs_n}Epochs--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
+        model.save(self.models_path + f'/{model_name}')
+
+    def save_data_and_labels(self):
+        obj = {'XX_tf': self.XX_tf, 'YY_tf': self.YY_tf, 'entities': self.entities, 'entities_idx': self.entities_idx,
+               'relations_dict': self.relations_dict,
+               'Normalized_Adjacency_Matrix': self.Normalized_Adjacency_Matrix}
+
+        pickle.dump(obj, open(self.data_path + fr'/parsed_data.p', 'wb'))
+
+    def load_data_and_labels(self):
+        files = [f for f in os.listdir(self.data_path) if isfile(join(self.data_path, f))]
+        files = [f for f in files if f.endswith('.p')]
+        if len(files) > 1:
+            sys.exit('There are multiple saved obj files in the data_path. Delete all but one or start over')
+        if len(files) < 1:
+            return None
+        with open(self.data_path + fr'/parsed_data.p', 'rb') as read:
+            return pickle.load(read)
+
+
+A = TF_Models('./data_sets/NASDAQ_Cleaned', './models')
 # A.generate_model(A.XX_tf.shape[1:])
