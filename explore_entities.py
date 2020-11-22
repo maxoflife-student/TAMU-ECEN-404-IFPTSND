@@ -1,39 +1,28 @@
 import sys
 
-import os
 from os import listdir
 from os.path import isfile, join
 
-import datetime
-import time
-
-from pathlib import Path
-
-import IPython
-import IPython.display
-import numpy as np
-import pandas as pd
 import tensorflow as tf
 
-import random
-from random import shuffle
-
+import pandas as pd
 import numpy as np
+
 from IPython.display import display
+
+import ipywidgets as widgets
+from ipywidgets import Layout
 from bqplot import (
     LinearScale, Lines, Axis, Figure, Toolbar, ColorScale
 )
 
-import ipywidgets as widgets
-from ipywidgets import Layout
-import matplotlib.colors as colors
-
-import pickle
 import json
 
+# Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
+import warnings
+warnings.filterwarnings('ignore')
+
 '''Given an item and a list, if that item is in the list, returns the index of that item'''
-
-
 def return_idx(item, l):
     i = 0
     for thing in l:
@@ -49,17 +38,17 @@ def return_idx(item, l):
 
 
 class Graph_Entities():
-    def __init__(self, path):
+    def __init__(self, data_path):
         # The directory where all the entities time_series CSV are stored
-        self.path = path
-        self.entities, self.entities_idx = self._generate_list_of_entities()
+        self.data_path = data_path
+        self.entities, self.entities_idx = self._generate_list_of_entities(data_path)
         self.relations_dict = self._generate_relations()
-        self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+        # self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
 
     '''Using the names of .csv files in the data_set directory, loads the entities as a list into memory'''
 
-    def _generate_list_of_entities(self):
-        files = [f for f in listdir(self.path) if isfile(join(self.path, f))]
+    def _generate_list_of_entities(self, data_path):
+        files = [f for f in listdir(data_path) if isfile(join(data_path, f))]
         ents = [i.replace('.csv', '') for i in files if i.endswith('.csv')]
         ents.sort()
         ents_idx = {item: idx for idx, item in enumerate(ents)}
@@ -68,12 +57,12 @@ class Graph_Entities():
     '''Using the only .json file in the data_set directory, loads the relations as a dictionary into memory'''
 
     def _generate_relations(self):
-        files = [f for f in listdir(self.path) if isfile(join(self.path, f))]
+        files = [f for f in listdir(self.data_path) if isfile(join(self.data_path, f))]
         relation_file = [i for i in files if i.endswith('.json')]
 
         if len(relation_file) == 1:
             # Load the relationship dictionary
-            with open(self.path + '\\' + relation_file[0]) as read_file:
+            with open(self.data_path + '\\' + relation_file[0]) as read_file:
                 relations_dict = json.load(read_file)
                 return relations_dict
 
@@ -184,7 +173,7 @@ class Graph_Entities():
                 line_styles.append('dash_dotted')
 
         # There will always be one entity selected, so it sets the X-axis
-        ent_df = pd.read_csv(self.path + '\\' + self.sel_ent + ".csv")
+        ent_df = pd.read_csv(self.data_path + '\\' + self.sel_ent + ".csv")
         x_data = list(range(len(ent_df[ent_df.columns[self.feature_key[self.sel_feature]]].values)))[
                  x_range[0]:x_range[1]]
 
@@ -203,7 +192,7 @@ class Graph_Entities():
             keys.insert(0, self.sel_ent)
 
             # List of DataFrames containing all the entities related to each other
-            list_of_dfs = [pd.read_csv(self.path + '\\' + entity + ".csv") for entity in keys]
+            list_of_dfs = [pd.read_csv(self.data_path + '\\' + entity + ".csv") for entity in keys]
             # List of values from those DataFrames
             values = [df[df.columns[self.feature_key[self.sel_feature]]].values for df in list_of_dfs]
 
@@ -254,7 +243,7 @@ class Graph_Entities():
                 num_of_neighbors = 0
 
             # Load in the data for the selected entity
-            ent_df = pd.read_csv(self.path + '\\' + self.sel_ent + ".csv")
+            ent_df = pd.read_csv(self.data_path + '\\' + self.sel_ent + ".csv")
             # Create a dropdown menu to select which feature you would like to view
             ent_features = [f'{i}' for i in ent_df.columns]
 
