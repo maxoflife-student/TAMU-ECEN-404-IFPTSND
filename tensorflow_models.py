@@ -1,50 +1,19 @@
-import sys
-
-from os import listdir
-from os.path import isfile, join
-
-import tensorflow as tf
-
-import pandas as pd
-import numpy as np
-
-from IPython.display import display
-
-import ipywidgets as widgets
-from ipywidgets import Layout
-from bqplot import (
-    LinearScale, Lines, Axis, Figure, Toolbar, ColorScale
-)
-
-import json
-
-import os
 import datetime
-import time
 import sys
 
-from pathlib import Path
-
-import IPython
-import IPython.display
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.python.client import device_lib
 from tensorflow import *
 
 from tensorflow import keras
-from tensorflow.keras import callbacks
-from tensorflow import math
-
 import tensorflow.keras.backend as kb
 from tensorflow.python.ops import math_ops
 
-from explore_entities import Graph_Entities
+from tensorflow.keras.layers import Dense, LSTM
 
-from tensorflow.keras.layers import Dense, Dropout, LSTM, Multiply
+import warnings
+from explore_entities import Graph_Entities
 
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
@@ -96,10 +65,6 @@ def rank_loss_func(alpha=1):
     return rlf
 
 
-# Define a func using the Tensorflow 2.0 implementation of Leaky ReLU
-leaky_relu = lambda x: tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-
 # Define a custom layer in Tensorflow 2.0 to implement a matrix multiplication
 # operation using the output of an LSTM layer and another given matrix
 class Ein_Multiply(tf.keras.layers.Layer):
@@ -108,6 +73,11 @@ class Ein_Multiply(tf.keras.layers.Layer):
 
     def call(self, input):
         return tf.einsum('ij,ik->ik', input[0], input[1])
+
+
+# Create a function for the Tensorflow implementation of Tensorflow 2
+def leaky_relu():
+    return lambda x: tf.keras.layers.LeakyReLU(alpha=0.2)(x)
 
 
 class TF_Models(Graph_Entities):
@@ -122,6 +92,14 @@ class TF_Models(Graph_Entities):
 
         self.XX_tf = self._load_data_into_TF()
         self.YY_tf = self._create_labels()
+
+        # Stores the last model affected in memory
+        self.last_model = None
+        self.epochs_n = None
+        self.tag_t = None
+        self.loss_t = None
+        self.date_t = None
+        self.hidden_units = None
 
     '''Returns a 3 Dimensional Tensor with dimensions: (Entities, Sequences, Features)'''
     '''For the LSTM model, the first dimension is a placeholder, so entities must be first'''
@@ -197,7 +175,15 @@ class TF_Models(Graph_Entities):
                 'x_val': x_val, 'y_val': y_val,
                 'x_test': x_test, 'y_test': y_test}
 
-    def generate_model(self, input_shape, model_type='lstm', gcn_shape=None, loss_function='mse', activation='relu', learning_rate=1e-5, decay_rate=1e-6, hidden_units=64):
+    def generate_model(self, input_shape, model_type='lstm', gcn_shape=None, loss_function='mse', activation='relu',
+                       learning_rate=1e-5, decay_rate=1e-6, hidden_units=64, true_random=False):
+
+        # Ignore cuDDa warning messages
+        warnings.filterwarnings('ignore')
+
+        # By controlling the random starting weights, the models can be more accurately assessed against one another
+        if not true_random:
+            tf.random.set_seed(1)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, decay=decay_rate)
 
@@ -205,12 +191,13 @@ class TF_Models(Graph_Entities):
         # Sequential Input Data
         input_seq = keras.Input(shape=input_shape)
         # Normalized Ajacency Matrix
-        input_rel = keras.Input(shape=gcn_shape)
+        if gcn_shape is not None:
+            input_rel = keras.Input(shape=gcn_shape)
 
         '''Keras Layers'''
         LSTM_t = LSTM(hidden_units, return_sequences=True, activation=activation)
         LSTM_f = LSTM(hidden_units, return_sequences=False, activation=activation)
-        Dense_u = Dense(64, activation=activation)
+        Dense_u = Dense(hidden_units, activation=activation)
         Dense_o = Dense(1, activation=activation)
 
         '''Custom Layers'''
@@ -243,17 +230,50 @@ class TF_Models(Graph_Entities):
             x = Dense_u(x)
             x = Dense_o(x)
             model = tf.keras.Model(inputs=[input_seq], outputs=x)
-            None
 
         else:
-            None
+            sys.exit('You must specify a model type')
 
         model.compile(loss=loss_function, optimizer=optimizer)
         model.summary()
 
+        # Enable warnings again
+        warnings.filterwarnings('once')
+
+        # Save a copy in memory just in case
+        self.last_model = model
+        # Save the tags in memory for saving the file
+        self.hidden_units = hidden_units
+
+        # If the loss function is not a string, get its name directly
+        if type(loss_function) is not str:
+            loss_function = loss_function.__name__
+        self.loss_t = loss_function
+
         return model
 
+    def train_model(self, model, x_train, y_train, x_val, y_val, epochs, gcn_matrix=None):
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min')
+        reduce_lr_plateau = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.8, patience=2, verbose=0,
+                                                                 mode='auto', min_delta=0.0001, cooldown=0, min_lr=0)
 
-A = TF_Models('./data_sets/NASDAQ_Cleaned', './models')
-A.generate_model(A.XX_tf.shape[1:])
+        inputs_train = [x_train]
+        inputs_val = [x_val]
+        if gcn_matrix is not None:
+            inputs_train.append(gcn_matrix)
+            inputs_val.append(gcn_matrix)
 
+        model.fit(inputs_train,
+                  y_train,
+                  batch_size=x_train.shape[0],
+                  epochs=epochs,
+                  validation_data=(inputs_val, y_val),
+                  callbacks=[early_stopping, reduce_lr_plateau])  # Temporary removal of tensorboard while testing Colab
+
+        self.epochs_n = epochs
+        self.date_t = model_run_time = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
+        self.last_model = model
+        return model
+
+# A = TF_Models('./data_sets/NASDAQ_Cleaned', './models')
+# A.generate_model(A.XX_tf.shape[1:])
