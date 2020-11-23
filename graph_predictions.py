@@ -146,6 +146,9 @@ class Graph_Predictions():
             else:
                 line_styles.append('dash_dotted')
 
+        # Insert the black color used on the selected entity
+        colors_list.insert(0, '#000000')
+
         self.max_l = 0
         for key in strat_sel:
             value = len(self.strat_dict[key])
@@ -162,7 +165,10 @@ class Graph_Predictions():
         ax_y = Axis(scale=y_scale, label='Portfolio Total (USD)', orientation='vertical', label_offset='50px', )
 
         line = [Lines(labels=[strat_sel[i]], x=x_data, y=y_data[i], scales={'x': x_scale, 'y': y_scale},
-                      colors=[colors_list[i]], display_legend=True, line_styles=line_styles[i]) for i in range(len(strat_sel))]
+                      colors=[colors_list[i]], display_legend=True, line_styles=line_styles[i]) for i in range(1, len(strat_sel))]
+        # Line settings for the first entity
+        line.insert(0, Lines(labels=[strat_sel[0]], x=x_data, y=y_data[0], scales={'x': x_scale, 'y': y_scale},
+                             colors=[colors_list[0]], display_legend=True, stroke_width=6))
 
         fig = Figure(marks=line, axes=[ax_x, ax_y], title='Comparing Trading Strategies Over the Same Test Set',
                      colors=['red'], legend_location='top-left', legend_text={'font-size': 12})
@@ -208,7 +214,6 @@ class Graph_Predictions():
         total_by_day = []
 
         divisor = int(len(self.entities)/3)
-
         for day in range(1, self.num_time_steps - 1):
 
             # Choose 1/4 of the entities at random
@@ -342,7 +347,7 @@ class Graph_Predictions():
             # If money was lost on the last decision, choose the next best options(s)
             if avoid_fall:
                 if yesterday_earning > self.increment:
-                    c_choices = [max_index(pred, i) for i in range(average)]
+                    c_choices = [max_index(pred, i+1) for i in range(average)]
                     losing_streak = 0
                 else:
                     c_choices = [max_index(pred, i + losing_streak) for i in range(average)]

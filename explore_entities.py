@@ -11,7 +11,7 @@ import numpy as np
 from IPython.display import display
 
 import ipywidgets as widgets
-from ipywidgets import Layout
+from ipywidgets import Layout, GridBox
 from bqplot import (
     LinearScale, Lines, Axis, Figure, Toolbar, ColorScale
 )
@@ -39,12 +39,12 @@ def return_idx(item, l):
 
 
 class Graph_Entities():
-    def __init__(self, data_path):
+    def __init__(self, data_path, reload=False):
         # The directory where all the entities time_series CSV are stored
         self.data_path = data_path
         self.entities, self.entities_idx = self._generate_list_of_entities(data_path)
         self.relations_dict = self._generate_relations()
-        # self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+        self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
 
     '''Using the names of .csv files in the data_set directory, loads the entities as a list into memory'''
 
@@ -83,6 +83,17 @@ class Graph_Entities():
     '''Generates the normalized adjacency matrix from the relations dictionary'''
 
     def _generate_normalized_ajacency_matrix(self):
+
+        # Start the loading bar by initializing it
+        bar = widgets.IntProgress(min=0, max=5, value=0,
+                                      layout=Layout(width='auto'))
+        text = widgets.Text(value='Loading Normalized Adjacency Matrix:', description='', disabled=True, layout=Layout(width='auto'))
+        loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
+        display(loading_bar)
+
+        # Increment the loading bar
+        bar.value += 1
+
         companies = self.entities
         new_industry_relations = self.relations_dict
 
@@ -92,6 +103,9 @@ class Graph_Entities():
             for v in value:
                 new_value.append((return_idx(v, companies), v))
             new_industry_relations[key] = new_value
+
+        # Increment the loading bar
+        bar.value += 1
 
         # Iterate through each industry relationship and create an N x N adjacency matrix
         # Combine them all to create the final adjacency matrix in the same format as Paper #2
@@ -109,24 +123,41 @@ class Graph_Entities():
                     relation_slice[j[0], i[0]] = 1
             RR_t.append(relation_slice)
 
+        # Increment the loading bar
+        bar.value += 1
+
         RR_tf = tf.constant(RR_t)
         RR_tf = tf.transpose(RR_tf)
         relation_encoding = RR_tf.numpy()
         rel_shape = [relation_encoding.shape[0], relation_encoding.shape[1]]
         mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=2))
 
+        # Increment the loading bar
+        bar.value += 1
+
         ajacent = np.where(mask_flags, np.zeros(rel_shape, dtype=float), np.ones(rel_shape, dtype=float))
 
         degree = np.sum(ajacent, axis=0)
         for i in range(len(degree)):
             degree[i] = 1.0 / degree[i]
+
+        # Increment the loading bar
+        bar.value += 1
+
         np.sqrt(degree, degree)
         deg_neg_half_power = np.diag(degree)
 
         GCN_mat = np.dot(np.dot(deg_neg_half_power, ajacent), deg_neg_half_power)
 
+        # Increment the loading bar
+        bar.value += 1
+
         GCN_mat = np.nan_to_num(GCN_mat)
         GCN_mat = tf.constant(GCN_mat)
+
+        # Increment the loading bar
+        bar.value += 1
+        loading_bar.close()
         return GCN_mat
 
     '''Returns a list of neighboring entities to the given an entity, includes the given entity'''
@@ -215,7 +246,7 @@ class Graph_Entities():
             line = [Lines(labels=[keys[i]], x=x_data, y=values[i], scales={'x': x_scale, 'y': y_scale},
                           colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in n_range_of_entities[2:]]
 
-            # Line settings for the selected entity
+            # Line settings for the first entity
             line.insert(0, Lines(labels=[keys[0]], x=x_data, y=values[0], scales={'x': x_scale, 'y': y_scale},
                                  colors=[colors_list[0]], display_legend=True, stroke_width=6))
             print('Test')

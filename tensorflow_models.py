@@ -17,6 +17,9 @@ from tensorflow.keras.layers import Dense, LSTM
 
 import warnings
 from explore_entities import Graph_Entities
+import ipywidgets as widgets
+from ipywidgets import Layout, GridBox
+from IPython.display import display
 
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
@@ -126,13 +129,25 @@ class TF_Models(Graph_Entities):
     '''For the LSTM model, the first dimension is a placeholder, so entities must be first'''
 
     def _load_data_into_TF(self):
+
+        # Start the loading bar by initializing it
+        bar = widgets.IntProgress(min=0, max=len(self.entities), value=0,
+                                      layout=Layout(width='auto'))
+        text_1 = widgets.Text(value='Loading Entities into Memory:', description='', disabled=True, layout=Layout(width='auto'))
+        loading_bar = GridBox(children=[text_1, bar], layout=Layout(width='auto'))
+        display(loading_bar)
+
         XX_t = []
         for ent in self.entities:
             df = pd.read_csv(self.data_path + '/' + ent + '.csv')
             # Append the 2x2 tensor of each company's features through all time-sequences to the main tensor
             XX_t.append(df[0:].values)
 
+            # Increment the loading bar
+            bar.value += 1
+
         XX_t = tf.constant(XX_t)
+        loading_bar.close()
         return XX_t
 
     '''This function should be modified depending on the specific use case. In IFPTSND, the labels should be
@@ -140,6 +155,13 @@ class TF_Models(Graph_Entities):
         predictions are the final labels'''
 
     def _create_labels(self):
+
+        # Start the loading bar by initializing it
+        bar = widgets.IntProgress(min=0, max=len(self.entities), value=0,
+                                      layout=Layout(width='auto'))
+        text = widgets.Text(value='Calculating Labels:', description='', disabled=True, layout=Layout(width='auto'))
+        loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
+        display(loading_bar)
 
         XX_t = self.XX_tf.numpy()
 
@@ -155,6 +177,8 @@ class TF_Models(Graph_Entities):
         # had we purchased the stock
         YY_tf = np.copy(YY_t)
         for e in range(XX_t.shape[0]):
+            # Increment the loading bar
+            bar.value += 1
             for t in range(XX_t.shape[1] - 1):
                 YY_tf[e, t] = (YY_t[e, t] - XX_t[e, t, 0]) / XX_t[e, t, 0]
 
@@ -163,6 +187,7 @@ class TF_Models(Graph_Entities):
                 if YY_tf[e, t] == 0:
                     YY_tf[e, t] = 1e-10
 
+        loading_bar.close()
         return tf.constant(YY_tf)
 
     '''Splits the data into a training, validation, and testing set. The proportion of entries in each category
