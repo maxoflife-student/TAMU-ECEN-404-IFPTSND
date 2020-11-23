@@ -1,57 +1,27 @@
-# Remove Tensorflow 2.0 Error Messages
 import os
 from os.path import isfile, join
 
 from tensorflow_models import leaky_relu, Ein_Multiply
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
-import datetime
-import time
-
-from pathlib import Path
-
-import IPython
-from IPython.display import display
-
-import bqplot
-from bqplot import (
-    OrdinalScale, LinearScale, Bars, Lines, Axis, Figure, PanZoom, Toolbar
-)
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
 import tensorflow as tf
-from tensorflow.python.client import device_lib
-from tensorflow.keras.layers import Dense, Dropout, LSTM
-from tensorflow.compat.v1.keras.layers import CuDNNLSTM
-
-from tensorflow import keras
-from tensorflow.keras import callbacks
-
-import tensorflow.keras.backend as kb
-from tensorflow.python.ops import *
-
 import random
-from random import shuffle
 
-import logging
-
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
-logging.getLogger("tensorflow").addHandler(logging.NullHandler(logging.ERROR))
-
-import numpy as np
 from IPython.display import display
 from bqplot import (
-    OrdinalScale, LinearScale, Bars, Lines, Axis, Figure, PanZoom, Toolbar
+    LinearScale, Lines, Axis, Figure, Toolbar
 )
-
 
 import ipywidgets as widgets
 
 import pickle
+import warnings
+import os
+
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
 
 # Given a list, return the max index of that list
 # If given rank, then it returns the rank-th highest index
@@ -75,7 +45,6 @@ class Graph_Predictions():
         self.x_val = x_val
         self.x_test = x_test
         self.Normalized_Adjacency_Matrix = Normalized_Adjacency_Matrix
-
 
         # Data used in our specific strategy implementation method
         self.increment = 5e4
@@ -109,6 +78,7 @@ class Graph_Predictions():
         return files
 
     '''Takes in a list of files, returns a list of list of values'''
+
     def values_from_p(self, file):
         file_l = []
         for f in file:
@@ -135,13 +105,13 @@ class Graph_Predictions():
         line_styles = []
         # Account for the added one black at the end
         n = len(colors_list) - 1
-        n4 = int(n/4)
+        n4 = int(n / 4)
         for i in range(n):
             if i <= n4:
                 line_styles.append('solid')
-            elif n4 < i <= 2*n4:
+            elif n4 < i <= 2 * n4:
                 line_styles.append('dashed')
-            elif 2*n4 < i <= 3*n4:
+            elif 2 * n4 < i <= 3 * n4:
                 line_styles.append('dotted')
             else:
                 line_styles.append('dash_dotted')
@@ -165,7 +135,8 @@ class Graph_Predictions():
         ax_y = Axis(scale=y_scale, label='Portfolio Total (USD)', orientation='vertical', label_offset='50px', )
 
         line = [Lines(labels=[strat_sel[i]], x=x_data, y=y_data[i], scales={'x': x_scale, 'y': y_scale},
-                      colors=[colors_list[i]], display_legend=True, line_styles=line_styles[i]) for i in range(1, len(strat_sel))]
+                      colors=[colors_list[i]], display_legend=True, line_styles=line_styles[i]) for i in
+                range(1, len(strat_sel))]
         # Line settings for the first entity
         line.insert(0, Lines(labels=[strat_sel[0]], x=x_data, y=y_data[0], scales={'x': x_scale, 'y': y_scale},
                              colors=[colors_list[0]], display_legend=True, stroke_width=6))
@@ -213,7 +184,7 @@ class Graph_Predictions():
         yesterday_earning = 0
         total_by_day = []
 
-        divisor = int(len(self.entities)/3)
+        divisor = int(len(self.entities) / 3)
         for day in range(1, self.num_time_steps - 1):
 
             # Choose 1/4 of the entities at random
@@ -347,7 +318,7 @@ class Graph_Predictions():
             # If money was lost on the last decision, choose the next best options(s)
             if avoid_fall:
                 if yesterday_earning > self.increment:
-                    c_choices = [max_index(pred, i+1) for i in range(average)]
+                    c_choices = [max_index(pred, i + 1) for i in range(average)]
                     losing_streak = 0
                 else:
                     c_choices = [max_index(pred, i + losing_streak) for i in range(average)]

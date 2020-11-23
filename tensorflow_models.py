@@ -1,8 +1,8 @@
 import datetime
 import pickle
 import sys
-import os
 from os.path import join, isfile
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -15,13 +15,17 @@ from tensorflow.python.ops import math_ops
 
 from tensorflow.keras.layers import Dense, LSTM
 
-import warnings
 from explore_entities import Graph_Entities
 import ipywidgets as widgets
 from ipywidgets import Layout, GridBox
 from IPython.display import display
 
-import time
+import warnings
+import os
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
 
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
@@ -275,7 +279,12 @@ class TF_Models(Graph_Entities):
     def _generate_model(self, model_type, loss_function, activation, hidden_units,
                         learning_rate=1e-5, decay_rate=1e-6, true_random=False):
 
+        if os.path.exists('./tmp'):
+            shutil.rmtree('./tmp')
+
         self.model = None
+        if './tmp' in os.listdir('./'):
+            os.rmdir('./tmp')
 
         # Useful later
         self.model_type = model_type
@@ -366,6 +375,8 @@ class TF_Models(Graph_Entities):
 
     def train_model(self, epochs, learning_rate=1e-5):
 
+        self.epochs_n += epochs
+
         # If the validation loss doesn't improve after 3 epochs, stop training
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, mode='min')
 
@@ -402,7 +413,7 @@ class TF_Models(Graph_Entities):
 
         # Reloads the checkpoint with the lowest validation loss
         self.model.load_weights(checkpoint_filepath)
-        self.date_t = model_run_time = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
+        self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
 
     def save_model(self, tag=''):
         model_name = f'{self.date_t}--{tag}--{self.epochs_n}Epochs--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'

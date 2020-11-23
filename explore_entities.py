@@ -17,7 +17,11 @@ from bqplot import (
 )
 
 import json
-import pickle
+import warnings
+import os
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 # Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
 import warnings
