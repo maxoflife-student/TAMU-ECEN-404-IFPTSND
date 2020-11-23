@@ -21,6 +21,8 @@ import ipywidgets as widgets
 from ipywidgets import Layout, GridBox
 from IPython.display import display
 
+import time
+
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
@@ -91,6 +93,9 @@ def leaky_relu(x):
 
 class TF_Models(Graph_Entities):
     def __init__(self, data_path, models_path, reload=False):
+
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
         self.data_path = data_path
         self.models_path = models_path
 
@@ -118,12 +123,15 @@ class TF_Models(Graph_Entities):
             self.YY_tf = self.load_obj['YY_tf']
 
         # Stores the last model affected in memory
-        self.last_model = None
-        self.epochs_n = None
+        self.model = None
+        self.epochs_n = 0
         self.tag_t = ''
         self.loss_t = None
         self.date_t = None
         self.hidden_units = None
+
+        # Automatically splits the data
+        self.data_splits = self.split_data()
 
     '''Returns a 3 Dimensional Tensor with dimensions: (Entities, Sequences, Features)'''
     '''For the LSTM model, the first dimension is a placeholder, so entities must be first'''
@@ -132,9 +140,10 @@ class TF_Models(Graph_Entities):
 
         # Start the loading bar by initializing it
         bar = widgets.IntProgress(min=0, max=len(self.entities), value=0,
-                                      layout=Layout(width='auto'))
-        text_1 = widgets.Text(value='Loading Entities into Memory:', description='', disabled=True, layout=Layout(width='auto'))
-        loading_bar = GridBox(children=[text_1, bar], layout=Layout(width='auto'))
+                                  layout=Layout(width='auto'))
+        text = widgets.Text(value='Loading Entities into Memory:', description='', disabled=True,
+                            layout=Layout(width='auto'))
+        loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
         display(loading_bar)
 
         XX_t = []
@@ -158,7 +167,7 @@ class TF_Models(Graph_Entities):
 
         # Start the loading bar by initializing it
         bar = widgets.IntProgress(min=0, max=len(self.entities), value=0,
-                                      layout=Layout(width='auto'))
+                                  layout=Layout(width='auto'))
         text = widgets.Text(value='Calculating Labels:', description='', disabled=True, layout=Layout(width='auto'))
         loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
         display(loading_bar)
@@ -221,11 +230,64 @@ class TF_Models(Graph_Entities):
                 'x_val': x_val, 'y_val': y_val,
                 'x_test': x_test, 'y_test': y_test}
 
-    def generate_model(self, model_type='lstm', gcn_shape=None, loss_function='mse', activation='relu',
-                       learning_rate=1e-5, decay_rate=1e-6, hidden_units=64, true_random=False):
+    def generate_model(self):
+        model_drop = widgets.Dropdown(
+            value='lstm',
+            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3'],
+            description='Model Types:',
+            style=dict(description_width='initial'),
+        )
 
-        # Ignore cuDDa warning messages
-        warnings.filterwarnings('ignore')
+        loss_drop = widgets.Dropdown(
+            value='mse',
+            options=['mse', 'rank_loss'],
+            description='Loss Functions:',
+            style=dict(description_width='initial'),
+        )
+
+        act_drop = widgets.Dropdown(
+            options=['relu', 'leaky_relu', 'sigmoid'],
+            description='Activation Functions:',
+            style=dict(description_width='initial'),
+        )
+
+        units = widgets.BoundedIntText(
+            value=64,
+            min=16,
+            max=256,
+            description='Number of Units',
+            style=dict(description_width='initial'),
+        )
+
+        button = widgets.Button(description="Generate")
+
+        container = GridBox(children=[model_drop, loss_drop, act_drop, units, button])
+        display(container)
+
+        gb = self._generate_model
+
+        def on_button_clicked(b):
+            gb(model_drop.value, loss_drop.value,
+               act_drop.value, units.value)
+
+        button.on_click(on_button_clicked)
+
+    def _generate_model(self, model_type, loss_function, activation, hidden_units,
+                        learning_rate=1e-5, decay_rate=1e-6, true_random=False):
+
+        self.model = None
+
+        # Useful later
+        self.model_type = model_type
+        self.epochs_n = 0
+
+        if activation == 'leaky_relu':
+            activation = leaky_relu
+
+        if model_type != 'lstm':
+            gcn_shape = True
+        else:
+            gcn_shape = False
 
         # By controlling the random starting weights, the models can be more accurately assessed against one another
         if not true_random:
@@ -237,8 +299,8 @@ class TF_Models(Graph_Entities):
         # Sequential Input Data
         input_seq = keras.Input(shape=self.XX_tf.shape[1:])
         # Normalized Ajacency Matrix
-        if gcn_shape is not None:
-            input_rel = keras.Input(shape=gcn_shape)
+        if gcn_shape:
+            input_rel = keras.Input(shape=self.Normalized_Adjacency_Matrix.shape[0])
 
         '''Keras Layers'''
         LSTM_t = LSTM(hidden_units, return_sequences=True, activation=activation)
@@ -249,13 +311,12 @@ class TF_Models(Graph_Entities):
         '''Custom Layers'''
         # Ein_Multiply
 
-        model = None
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
             x = LSTM_t(input_seq)
             x = LSTM_f(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq], outputs=x)
+            self.model = tf.keras.Model(inputs=[input_seq], outputs=x)
         # Two LSTM layers, One GCN Layer, One Dense Layer: (None, 1)
         elif model_type == 'lstm_gcn_1':
             x = LSTM_t(input_seq)
@@ -263,7 +324,7 @@ class TF_Models(Graph_Entities):
             x = Ein_Multiply()([input_rel, x])
             x = Dense_u(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         # Two LSTM layers, Two GCN Layers, One Dense Layer: (None, 1)
         elif model_type == 'lstm_gcn_2':
             x = LSTM_t(input_seq)
@@ -273,7 +334,7 @@ class TF_Models(Graph_Entities):
             x = Ein_Multiply()([input_rel, x])
             x = Dense(hidden_units, activation=activation)(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         elif model_type == 'lstm_gcn_3':
             x = LSTM_t(input_seq)
             x = LSTM_f(x)
@@ -284,18 +345,16 @@ class TF_Models(Graph_Entities):
             x = Ein_Multiply()([input_rel, x])
             x = Dense(hidden_units, activation=activation)(x)
             x = Dense_o(x)
-            model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         else:
             sys.exit('You must specify a model type')
 
-        model.compile(loss=loss_function, optimizer=optimizer)
-        model.summary()
+        if loss_function == 'rank_loss':
+            loss_function = rank_loss_func(1)
 
-        # Enable warnings again
-        warnings.filterwarnings('once')
+        self.model.compile(loss=loss_function, optimizer=optimizer)
+        self.model.summary()
 
-        # Save a copy in memory just in case
-        self.last_model = model
         # Save the tags in memory for saving the file
         self.hidden_units = hidden_units
         self.model_type = model_type
@@ -305,25 +364,20 @@ class TF_Models(Graph_Entities):
             loss_function = loss_function.__name__
         self.loss_t = loss_function
 
-        return model
+    def train_model(self, epochs, learning_rate=1e-5):
 
-    def train_model(self, model, x_train, y_train, x_val, y_val, epochs, gcn_matrix=None, learning_rate=1e-5):
-
+        # If the validation loss doesn't improve after 3 epochs, stop training
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, mode='min')
 
+        # Together these functions allow the train_model feature to update the learning_rate without
+        # re-establishing the model
         def scheduler(epoch, lr):
             return learning_rate
-
         lr_schedule = tf.keras.callbacks.LearningRateScheduler(
             scheduler, verbose=0
         )
 
-        print(type(gcn_matrix))
-
-        # Experimental
-        # reduce_lr_plateau = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=0, verbose=0,
-        #
-        #                                                          mode='auto', min_delta=0.0001, cooldown=0, min_lr=0)
+        # Callback for loading the best validation loss checkpoint
         checkpoint_filepath = './tmp/checkpoint'
         model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_filepath,
@@ -332,30 +386,27 @@ class TF_Models(Graph_Entities):
             mode='min',
             save_best_only=True)
 
-        inputs_train = [x_train]
-        inputs_val = [x_val]
-        if gcn_matrix is not None:
-            inputs_train.append(gcn_matrix)
-            inputs_val.append(gcn_matrix)
+        inputs_train = [self.data_splits['x_train']]
+        inputs_val = [self.data_splits['x_val']]
+        if self.model_type != 'lstm':
+            inputs_train.append(self.Normalized_Adjacency_Matrix)
+            inputs_val.append(self.Normalized_Adjacency_Matrix)
 
-        model.fit(inputs_train,
-                  y_train,
-                  batch_size=x_train.shape[0],
+        self.model.fit(inputs_train,
+                  self.data_splits['y_train'],
+                  batch_size=self.data_splits['x_train'].shape[0],
                   epochs=epochs,
-                  validation_data=(inputs_val, y_val),
-                  callbacks=[early_stopping, model_checkpoint_callback, lr_schedule])  # Temporary removal of tensorboard while testing Colab
+                  validation_data=(inputs_val, self.data_splits['y_val']),
+                  callbacks=[early_stopping, model_checkpoint_callback,
+                             lr_schedule])
 
-        model.load_weights(checkpoint_filepath)
-
-        self.epochs_n = epochs
+        # Reloads the checkpoint with the lowest validation loss
+        self.model.load_weights(checkpoint_filepath)
         self.date_t = model_run_time = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
-        self.last_model = model
 
-        return model
-
-    def save_model(self, model, tag=''):
+    def save_model(self, tag=''):
         model_name = f'{self.date_t}--{tag}--{self.epochs_n}Epochs--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
-        model.save(self.models_path + f'/{model_name}')
+        self.model.save(self.models_path + f'/{model_name}')
 
     def save_data_and_labels(self):
         obj = {'XX_tf': self.XX_tf, 'YY_tf': self.YY_tf, 'entities': self.entities, 'entities_idx': self.entities_idx,
@@ -373,7 +424,3 @@ class TF_Models(Graph_Entities):
             return None
         with open(self.data_path + fr'/parsed_data.p', 'rb') as read:
             return pickle.load(read)
-
-
-A = TF_Models('./data_sets/NASDAQ_Cleaned', './models')
-# A.generate_model(A.XX_tf.shape[1:])

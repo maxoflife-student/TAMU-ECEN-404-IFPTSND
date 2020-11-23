@@ -85,14 +85,11 @@ class Graph_Entities():
     def _generate_normalized_ajacency_matrix(self):
 
         # Start the loading bar by initializing it
-        bar = widgets.IntProgress(min=0, max=5, value=0,
+        bar = widgets.IntProgress(min=0, max=len(self.entities)*22.5, value=0,
                                       layout=Layout(width='auto'))
         text = widgets.Text(value='Loading Normalized Adjacency Matrix:', description='', disabled=True, layout=Layout(width='auto'))
         loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
         display(loading_bar)
-
-        # Increment the loading bar
-        bar.value += 1
 
         companies = self.entities
         new_industry_relations = self.relations_dict
@@ -103,9 +100,6 @@ class Graph_Entities():
             for v in value:
                 new_value.append((return_idx(v, companies), v))
             new_industry_relations[key] = new_value
-
-        # Increment the loading bar
-        bar.value += 1
 
         # Iterate through each industry relationship and create an N x N adjacency matrix
         # Combine them all to create the final adjacency matrix in the same format as Paper #2
@@ -118,9 +112,12 @@ class Graph_Entities():
             # Gather all the companies that exist in this sector
             siblings = new_industry_relations[sector]
             for i in siblings:
+                bar.value += 1
                 for j in siblings:
+                    bar.value += 1
                     relation_slice[i[0], j[0]] = 1
                     relation_slice[j[0], i[0]] = 1
+            # Increment the loading bar
             RR_t.append(relation_slice)
 
         # Increment the loading bar
@@ -141,22 +138,14 @@ class Graph_Entities():
         for i in range(len(degree)):
             degree[i] = 1.0 / degree[i]
 
-        # Increment the loading bar
-        bar.value += 1
-
         np.sqrt(degree, degree)
         deg_neg_half_power = np.diag(degree)
 
         GCN_mat = np.dot(np.dot(deg_neg_half_power, ajacent), deg_neg_half_power)
 
-        # Increment the loading bar
-        bar.value += 1
-
         GCN_mat = np.nan_to_num(GCN_mat)
         GCN_mat = tf.constant(GCN_mat)
 
-        # Increment the loading bar
-        bar.value += 1
         loading_bar.close()
         return GCN_mat
 
