@@ -234,10 +234,14 @@ class TF_Models(Graph_Entities):
                 'x_val': x_val, 'y_val': y_val,
                 'x_test': x_test, 'y_test': y_test}
 
+    '''Displays a dropdown selection of model parameters to select from
+        When the generate button is pressed, that model is saved as a part
+        of the class to be used in training'''
+
     def generate_model(self):
         model_drop = widgets.Dropdown(
             value='lstm',
-            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3'],
+            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3', 'lstm_gcn_3'],
             description='Model Types:',
             style=dict(description_width='initial'),
         )
@@ -322,42 +326,47 @@ class TF_Models(Graph_Entities):
 
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
-            x = LSTM_t(input_seq)
-            x = LSTM_f(x)
-            x = Dense_o(x)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
+            x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq], outputs=x)
+
         # Two LSTM layers, One GCN Layer, One Dense Layer: (None, 1)
         elif model_type == 'lstm_gcn_1':
-            x = LSTM_t(input_seq)
-            x = LSTM_f(x)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
+            x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
             x = Ein_Multiply()([input_rel, x])
-            x = Dense_u(x)
-            x = Dense_o(x)
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+
         # Two LSTM layers, Two GCN Layers, One Dense Layer: (None, 1)
         elif model_type == 'lstm_gcn_2':
-            x = LSTM_t(input_seq)
-            x = LSTM_f(x)
-            x = Ein_Multiply()([input_rel, x])
-            x = Dense_u(x)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
+            x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
             x = Ein_Multiply()([input_rel, x])
             x = Dense(hidden_units, activation=activation)(x)
-            x = Dense_o(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+
+        # Two LSTM layers, Three GCN Layers, One Dense Layer: (None, 1)
         elif model_type == 'lstm_gcn_3':
-            x = LSTM_t(input_seq)
-            x = LSTM_f(x)
-            x = Ein_Multiply()([input_rel, x])
-            x = Dense_u(x)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
+            x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
             x = Ein_Multiply()([input_rel, x])
             x = Dense(hidden_units, activation=activation)(x)
             x = Ein_Multiply()([input_rel, x])
             x = Dense(hidden_units, activation=activation)(x)
-            x = Dense_o(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
         else:
             sys.exit('You must specify a model type')
 
+        # Specify which loss function to use
         if loss_function == 'rank_loss':
             loss_function = rank_loss_func(1)
 
@@ -372,6 +381,11 @@ class TF_Models(Graph_Entities):
         if type(loss_function) is not str:
             loss_function = loss_function.__name__
         self.loss_t = loss_function
+
+
+    '''Run this function to train the generated model. Using early stopping, Model Checkpoint as callbacks, and the
+        learning rate scheduler, this training can be run multple times on the same model with different learning rates.
+        Additionally, the best model will be selected based on the validation set to avoid worry of over-training'''
 
     def train_model(self, epochs, learning_rate=1e-5):
 
@@ -415,9 +429,16 @@ class TF_Models(Graph_Entities):
         self.model.load_weights(checkpoint_filepath)
         self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
 
+    '''Saves the model that is currently loaded to the specified directory. Tags can be given to the model and the
+        filename utilizes the parameters from training and time of training to create the model name'''
+
     def save_model(self, tag=''):
         model_name = f'{self.date_t}--{tag}--{self.epochs_n}Epochs--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
         self.model.save(self.models_path + f'/{model_name}')
+
+    '''After parsing the .csv and .json data and then converting into data accessible by Tensorflow, it can be pickled
+        and reloaded next time a model needs to be trained. On Google Colab specifically, this can save ~10 minutes 
+        from a session restart'''
 
     def save_data_and_labels(self):
         obj = {'XX_tf': self.XX_tf, 'YY_tf': self.YY_tf, 'entities': self.entities, 'entities_idx': self.entities_idx,
@@ -425,6 +446,8 @@ class TF_Models(Graph_Entities):
                'Normalized_Adjacency_Matrix': self.Normalized_Adjacency_Matrix}
 
         pickle.dump(obj, open(self.data_path + fr'/parsed_data.p', 'wb'))
+
+    '''Given that a save_reload file was created already in the directory, the model will attempt to load it'''
 
     def load_data_and_labels(self):
         files = [f for f in os.listdir(self.data_path) if isfile(join(self.data_path, f))]

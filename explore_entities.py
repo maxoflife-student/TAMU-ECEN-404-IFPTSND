@@ -1,33 +1,24 @@
 import sys
-
 from os import listdir
 from os.path import isfile, join
-
 import tensorflow as tf
-
 import pandas as pd
 import numpy as np
-
 from IPython.display import display
-
 import ipywidgets as widgets
 from ipywidgets import Layout, GridBox
 from bqplot import (
-    LinearScale, Lines, Axis, Figure, Toolbar, ColorScale
+    LinearScale, Lines, Axis, Figure, Toolbar
 )
 
 import json
-import warnings
-import os
-warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 # Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
-import warnings
-warnings.filterwarnings('ignore')
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 '''Given an item and a list, if that item is in the list, returns the index of that item'''
+
+
 def return_idx(item, l):
     i = 0
     for thing in l:
@@ -37,9 +28,6 @@ def return_idx(item, l):
             i += 1
     # If it's not in the list, then it's failed
     return None
-
-
-'''Given a data_set folder with entities, provides tools to graph the entites'''
 
 
 class Graph_Entities():
@@ -78,20 +66,15 @@ class Graph_Entities():
             sys.exit('There are multiple .json files in the directory, remove all or leave 1')
 
 
-    '''Given a list of entities, return a list of their values averaged over the time-period'''
-    '''Will be useful in detecting when a Neighboring Group moves NOT in accordance with the average'''
-
-    def _generate_average_entity(self, entities):
-        None
-
     '''Generates the normalized adjacency matrix from the relations dictionary'''
 
     def _generate_normalized_ajacency_matrix(self):
 
-        # Start the loading bar by initializing it
-        bar = widgets.IntProgress(min=0, max=len(self.entities)*22.5, value=0,
-                                      layout=Layout(width='auto'))
-        text = widgets.Text(value='Loading Normalized Adjacency Matrix:', description='', disabled=True, layout=Layout(width='auto'))
+        # Used to display the loading bar in JupyterNotebook
+        bar = widgets.IntProgress(min=0, max=int(len(self.entities) * 3.2), value=0,
+                                  layout=Layout(width='auto'))
+        text = widgets.Text(value='Loading Normalized Adjacency Matrix:', description='', disabled=True,
+                            layout=Layout(width='auto'))
         loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
         display(loading_bar)
 
@@ -116,17 +99,17 @@ class Graph_Entities():
             # Gather all the companies that exist in this sector
             siblings = new_industry_relations[sector]
             for i in siblings:
-                bar.value += 1
+                # Increment the loading bar
+                bar.value += 3
                 for j in siblings:
-                    bar.value += 1
                     relation_slice[i[0], j[0]] = 1
                     relation_slice[j[0], i[0]] = 1
-            # Increment the loading bar
             RR_t.append(relation_slice)
 
         # Increment the loading bar
         bar.value += 1
 
+        # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
         RR_tf = tf.transpose(RR_tf)
         relation_encoding = RR_tf.numpy()
@@ -136,20 +119,28 @@ class Graph_Entities():
         # Increment the loading bar
         bar.value += 1
 
+        # Calculate the adjacency matrix
+        # Entities in this dataset already share a relationship with themselves (self-loop) so adding the Identity
+        # matrix isn't necessary
         ajacent = np.where(mask_flags, np.zeros(rel_shape, dtype=float), np.ones(rel_shape, dtype=float))
 
+        # Calculate the Diagonal Degree Matrix
         degree = np.sum(ajacent, axis=0)
         for i in range(len(degree)):
             degree[i] = 1.0 / degree[i]
 
+        # Raise it to the power of -1/2
         np.sqrt(degree, degree)
         deg_neg_half_power = np.diag(degree)
 
+        # This is the Normalized Adjacency Matrix (D^-1/2*(A)*D^-1/2)
         GCN_mat = np.dot(np.dot(deg_neg_half_power, ajacent), deg_neg_half_power)
 
+        # Some values were NaN during calculation, so they are replaced with zero
         GCN_mat = np.nan_to_num(GCN_mat)
         GCN_mat = tf.constant(GCN_mat)
 
+        # Close the loading bar
         loading_bar.close()
         return GCN_mat
 
@@ -187,13 +178,13 @@ class Graph_Entities():
         line_styles = []
         # Account for the added one black at the end
         n = len(colors_list) - 1
-        n4 = int(n/4)
+        n4 = int(n / 4)
         for i in range(n):
             if i <= n4:
                 line_styles.append('solid')
-            elif n4 < i <= 2*n4:
+            elif n4 < i <= 2 * n4:
                 line_styles.append('dashed')
-            elif 2*n4 < i <= 3*n4:
+            elif 2 * n4 < i <= 3 * n4:
                 line_styles.append('dotted')
             else:
                 line_styles.append('dash_dotted')
@@ -237,7 +228,8 @@ class Graph_Entities():
 
             # Line settings for all neighbors
             line = [Lines(labels=[keys[i]], x=x_data, y=values[i], scales={'x': x_scale, 'y': y_scale},
-                          colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in n_range_of_entities[2:]]
+                          colors=[colors_list[i]], display_legend=True, line_style=line_styles[i]) for i in
+                    n_range_of_entities[2:]]
 
             # Line settings for the first entity
             line.insert(0, Lines(labels=[keys[0]], x=x_data, y=values[0], scales={'x': x_scale, 'y': y_scale},

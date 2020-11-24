@@ -37,20 +37,20 @@ def max_index(l, rank=0):
 
 
 class Graph_Predictions():
-    def __init__(self, model_path, results_path, entities, x_val, x_test, Normalized_Adjacency_Matrix=None):
+    def __init__(self, model_path, results_path, tensorflow_model_obj):
         # Data that should be given to operate
         self.model_path = model_path
         self.results_path = results_path
-        self.entities = entities
-        self.x_val = x_val
-        self.x_test = x_test
-        self.Normalized_Adjacency_Matrix = Normalized_Adjacency_Matrix
+        self.entities = tensorflow_model_obj.entities
+        self.x_test = tensorflow_model_obj.data_splits['x_test']
+        self.x_val = tensorflow_model_obj.data_splits['x_val']
+        self.Normalized_Adjacency_Matrix = tensorflow_model_obj.Normalized_Adjacency_Matrix
 
         # Data used in our specific strategy implementation method
         self.increment = 5e4
         self.starting_investment = 2 * self.increment
-        self.num_entities = x_test.shape[0]
-        self.num_time_steps = x_test.shape[1]
+        self.num_entities = self.x_test.shape[0]
+        self.num_time_steps = self.x_test.shape[1]
 
         # Data saved in memory
         self.strategy_results = {}
@@ -58,12 +58,17 @@ class Graph_Predictions():
         # Load the files already in ./strategies
         self.update_strats()
 
+    '''Loads all saved strategy results from the directory into memory as a dictionary'''
+
     def update_strats(self):
         # Load in the strategy names stored in
         p_files = self.generate_p_files()
         values = self.values_from_p(p_files)
         # Combine them into a dictionary
         self.strat_dict = {p_files[i]: values[i] for i in range(len(values))}
+
+    '''Returns the list of pickled files in the directory and also calculates the average strategy if it has not been
+        completed'''
 
     def generate_p_files(self):
         files = [f for f in os.listdir(self.results_path) if isfile(join(self.results_path, f))]
@@ -77,7 +82,7 @@ class Graph_Predictions():
 
         return files
 
-    '''Takes in a list of files, returns a list of list of values'''
+    '''Takes in a list of files, returns a list of list of their values'''
 
     def values_from_p(self, file):
         file_l = []
@@ -85,6 +90,8 @@ class Graph_Predictions():
             with open(self.results_path + '\\' + f, 'rb') as read:
                 file_l.append(pickle.load(read))
         return file_l
+
+    '''Displays the main graph for reviewing strategies in the Jupyter Notebook output window'''
 
     def strat_graph(self, strat_sel):
 
@@ -142,7 +149,7 @@ class Graph_Predictions():
                              colors=[colors_list[0]], display_legend=True, stroke_width=6))
 
         fig = Figure(marks=line, axes=[ax_x, ax_y], title='Comparing Trading Strategies Over the Same Test Set',
-                     colors=['red'], legend_location='top-left', legend_text={'font-size': 12})
+                     colors=['red'], legend_location='top-left', legend_text={'font-size': 18})
         fig.layout.height = '950px'
 
         toolbar = Toolbar(figure=fig)
@@ -171,13 +178,16 @@ class Graph_Predictions():
         for key, value in self.strategy_results.items():
             pickle.dump(value, open(path + fr'/{key}.p', 'wb'))
 
-    '''Given a company, timestep, and amount, returns the amount of money earned from buying it and then selling it
+    '''Given a company, day, and amount, returns the amount of money earned from buying it and then selling it
         the next day'''
 
     def buy_then_sell(self, company, day, amount):
         today_price = self.x_test[company, day, 0]
         tomorrow_price = self.x_test[company, day + 1, 0]
         return amount * (tomorrow_price / today_price)
+
+    '''This strategy purchases a third of the entities each day at random and splits the total among them. This
+        creates an average that can be compared against'''
 
     def strategy_average(self):
         total = self.starting_investment
@@ -206,6 +216,10 @@ class Graph_Predictions():
             total_by_day.append(total)
 
         self.strategy_results['0_Average_0'] = total_by_day
+
+    '''This strategy utilizes an LSTM model to generate a column vector containing every entity in the dataset. It
+        chooses the entity that has the largest value in that column, signifying that the model predicts that stock
+        to grow the most by the next day. This process repeats during the testing set'''
 
     def strategy_ratio_lstm(self, model_name, name_override='', avoid_fall=True, average=1, expVis=True):
 
@@ -275,6 +289,10 @@ class Graph_Predictions():
             total_by_day.append(total)
 
         self.strategy_results[model_name] = total_by_day
+
+    '''This strategy utilizes an GCN model to generate a column vector containing every entity in the dataset. It
+        chooses the entity that has the largest value in that column, signifying that the model predicts that stock
+        to grow the most by the next day. This process repeats during the testing set'''
 
     def strategy_ratio_gcn(self, model_name, name_override='', avoid_fall=True, average=1, expVis=True):
 
