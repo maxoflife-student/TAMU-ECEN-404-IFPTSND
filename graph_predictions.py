@@ -95,6 +95,9 @@ class Graph_Predictions():
 
     def strat_graph(self, strat_sel):
 
+        # Load the files already in ./strategies
+        self.update_strats()
+
         # Create a class variable for the selected feature
         self.strat_sel = strat_sel
 
@@ -174,9 +177,9 @@ class Graph_Predictions():
 
     '''Save the calculated results to a pickle file to be used later'''
 
-    def save_results(self, path):
+    def save_results(self):
         for key, value in self.strategy_results.items():
-            pickle.dump(value, open(path + fr'/{key}.p', 'wb'))
+            pickle.dump(value, open(self.results_path + fr'/{key}.p', 'wb'))
 
     '''Given a company, day, and amount, returns the amount of money earned from buying it and then selling it
         the next day'''
@@ -289,6 +292,8 @@ class Graph_Predictions():
             total_by_day.append(total)
 
         self.strategy_results[model_name] = total_by_day
+        # Save the current strategy results
+        self.save_results()
 
     '''This strategy utilizes an GCN model to generate a column vector containing every entity in the dataset. It
         chooses the entity that has the largest value in that column, signifying that the model predicts that stock
@@ -312,7 +317,7 @@ class Graph_Predictions():
         losing_streak = -1
 
         for day in range(1, self.num_time_steps - 1):
-
+            
             # Add some feedback into the post-prediction algorithm
             if avoid_fall:
                 if yesterday_earning < self.increment:
@@ -336,7 +341,7 @@ class Graph_Predictions():
             # If money was lost on the last decision, choose the next best options(s)
             if avoid_fall:
                 if yesterday_earning > self.increment:
-                    c_choices = [max_index(pred, i + 1) for i in range(average)]
+                    c_choices = [max_index(pred, i) for i in range(average)]
                     losing_streak = 0
                 else:
                     c_choices = [max_index(pred, i + losing_streak) for i in range(average)]
@@ -362,3 +367,5 @@ class Graph_Predictions():
             total_by_day.append(total)
 
         self.strategy_results[model_name] = total_by_day
+        # Save the current strategy results
+        self.save_results()

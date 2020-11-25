@@ -12,6 +12,7 @@ from bqplot import (
 )
 
 import json
+import random
 
 # Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
@@ -65,10 +66,9 @@ class Graph_Entities():
         else:
             sys.exit('There are multiple .json files in the directory, remove all or leave 1')
 
-
     '''Generates the normalized adjacency matrix from the relations dictionary'''
 
-    def _generate_normalized_ajacency_matrix(self):
+    def _generate_normalized_ajacency_matrix(self, random_nam_test=False):
 
         # Used to display the loading bar in JupyterNotebook
         bar = widgets.IntProgress(min=0, max=int(len(self.entities) * 3.2), value=0,
@@ -109,6 +109,28 @@ class Graph_Entities():
         # Increment the loading bar
         bar.value += 1
 
+        # Creates a randomized NAM with the same total number of relations as the original input
+        # Only used for validation
+        if random_nam_test:
+            print('Randomized NAM Test:')
+            for i in range(len(RR_t)-1):
+                print(i, end=' ')
+                for j in range(len(RR_t[0])-1):
+                    for k in range(len(RR_t[0][0])-1):
+                        # If j = k, then that 1 should be the self-relation
+                        if RR_t[i][j][k] == 1 and j != k:
+                            RR_t[i][j][k] = 0
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
+
+                            # Also add spontaneous chance to modify the matrix
+                            if random.uniform(0, 1) < 0.01:
+                                random_relation = random.randint(0, len(RR_t[0][0])-1)
+                                if RR_t[i][j][random_relation] == 0:
+                                    RR_t[i][j][random_relation] = 1
+                                else:
+                                    RR_t[i][j][random_relation] = 0
+
+
         # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
         RR_tf = tf.transpose(RR_tf)
@@ -119,10 +141,10 @@ class Graph_Entities():
         # Increment the loading bar
         bar.value += 1
 
-        # Calculate the adjacency matrix
-        # Entities in this dataset already share a relationship with themselves (self-loop) so adding the Identity
-        # matrix isn't necessary
+        # Calculate the adjacency matrix and add the self-loops from the identity matrix if neccessary
         ajacent = np.where(mask_flags, np.zeros(rel_shape, dtype=float), np.ones(rel_shape, dtype=float))
+        ajacent = ajacent + np.identity(ajacent.shape[0])
+        ajacent = np.where(ajacent > 1, 1, ajacent)
 
         # Calculate the Diagonal Degree Matrix
         degree = np.sum(ajacent, axis=0)

@@ -241,7 +241,7 @@ class TF_Models(Graph_Entities):
     def generate_model(self):
         model_drop = widgets.Dropdown(
             value='lstm',
-            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3', 'lstm_gcn_3'],
+            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3'],
             description='Model Types:',
             style=dict(description_width='initial'),
         )
@@ -303,6 +303,7 @@ class TF_Models(Graph_Entities):
             gcn_shape = False
 
         # By controlling the random starting weights, the models can be more accurately assessed against one another
+        true_random = True
         if not true_random:
             tf.random.set_seed(1)
 
