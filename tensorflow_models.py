@@ -27,6 +27,12 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
+def custom_mse(y_actual, y_pred):
+
+    squared_error = math.ops.squared_difference(y_actual, y_pred)
+    average_mse = kb.mean(squared_error, axis=-1)
+
+    return average_mse
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
@@ -267,21 +273,27 @@ class TF_Models(Graph_Entities):
             style=dict(description_width='initial'),
         )
 
+        butt_random = widgets.Checkbox(
+            value=True,
+            description="Random Seed",
+            style=dict(description_width='initial'),
+        )
+
         button = widgets.Button(description="Generate")
 
-        container = GridBox(children=[model_drop, loss_drop, act_drop, units, button])
+        container = GridBox(children=[model_drop, loss_drop, act_drop, units, button, butt_random])
         display(container)
 
         gb = self._generate_model
 
         def on_button_clicked(b):
             gb(model_drop.value, loss_drop.value,
-               act_drop.value, units.value)
+               act_drop.value, units.value, butt_random)
 
         button.on_click(on_button_clicked)
 
-    def _generate_model(self, model_type, loss_function, activation, hidden_units,
-                        learning_rate=1e-5, decay_rate=1e-6, true_random=False):
+    def _generate_model(self, model_type, loss_function, activation, hidden_units, true_random,
+                        learning_rate=1e-5, decay_rate=1e-6):
 
         if os.path.exists('./tmp'):
             shutil.rmtree('./tmp')
@@ -303,9 +315,8 @@ class TF_Models(Graph_Entities):
             gcn_shape = False
 
         # By controlling the random starting weights, the models can be more accurately assessed against one another
-        true_random = True
         if not true_random:
-            tf.random.set_seed(1)
+            tf.random.set_seed(1337)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, decay=decay_rate)
 
