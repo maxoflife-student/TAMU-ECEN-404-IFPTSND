@@ -22,10 +22,10 @@ from IPython.display import display
 
 import warnings
 import os
+
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-
 
 
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
@@ -241,7 +241,7 @@ class TF_Models(Graph_Entities):
     def generate_model(self):
         model_drop = widgets.Dropdown(
             value='lstm',
-            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3'],
+            options=['lstm', 'lstm_gcn_1', 'lstm_gcn_2', 'lstm_gcn_3', 'seperate_lstm_gcn_3', 'seperate_lstm_gcn_1'],
             description='Model Types:',
             style=dict(description_width='initial'),
         )
@@ -364,6 +364,60 @@ class TF_Models(Graph_Entities):
             x = Dense(hidden_units, activation=activation)(x)
             x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+
+        elif model_type == 'seperate_lstm_gcn_3':
+            # Load in an already trained LSTM Model
+            file_name = '01-04-2021--13--38--LSTM-3e-5LR--75Epochs--mse-Loss--64-HU--'
+            model_path = './models'
+            pre_trained_lstm = tf.keras.models.load_model(model_path + f'/{file_name}', compile=False,
+                                                          custom_objects={'leaky_relu': leaky_relu})
+
+            # Change the names to avoid conflicts
+            pre_trained_lstm.layers[1]._name = 'b'
+            pre_trained_lstm.layers[2]._name = 'c'
+
+            # All of the layers from the loaded in LSTM model layers are used except for the last output and first input
+            # This takes the place of the LSTM layers since we want the LSTM and GCN to be separately trained
+            x = pre_trained_lstm.layers[1](input_seq)
+            x = pre_trained_lstm.layers[2](x)
+
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+
+            # Make sure that the weights for the lstm model cannot be updated
+            self.model.layers[1].trainable = False
+            self.model.layers[3].trainable = False
+
+        elif model_type == 'seperate_lstm_gcn_1':
+            # Load in an already trained LSTM Model
+            file_name = '01-04-2021--13--38--LSTM-3e-5LR--75Epochs--mse-Loss--64-HU--'
+            model_path = './models'
+            pre_trained_lstm = tf.keras.models.load_model(model_path + f'/{file_name}', compile=False,
+                                                          custom_objects={'leaky_relu': leaky_relu})
+
+            # Change the names to avoid conflicts
+            pre_trained_lstm.layers[1]._name = 'b'
+            pre_trained_lstm.layers[2]._name = 'c'
+
+            # All of the layers from the loaded in LSTM model layers are used except for the last output and first input
+            # This takes the place of the LSTM layers since we want the LSTM and GCN to be separately trained
+            x = pre_trained_lstm.layers[1](input_seq)
+            x = pre_trained_lstm.layers[2](x)
+
+            x = Ein_Multiply()([input_rel, x])
+            x = Dense(hidden_units, activation=activation)(x)
+            x = Dense(1, activation=activation)(x)
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=x)
+
+            # Make sure that the weights for the lstm model cannot be updated
+            self.model.layers[1].trainable = False
+            self.model.layers[3].trainable = False
         else:
             sys.exit('You must specify a model type')
 
@@ -383,7 +437,6 @@ class TF_Models(Graph_Entities):
             loss_function = loss_function.__name__
         self.loss_t = loss_function
 
-
     '''Run this function to train the generated model. Using early stopping, Model Checkpoint as callbacks, and the
         learning rate scheduler, this training can be run multple times on the same model with different learning rates.
         Additionally, the best model will be selected based on the validation set to avoid worry of over-training'''
@@ -399,6 +452,7 @@ class TF_Models(Graph_Entities):
         # re-establishing the model
         def scheduler(epoch, lr):
             return learning_rate
+
         lr_schedule = tf.keras.callbacks.LearningRateScheduler(
             scheduler, verbose=0
         )
@@ -419,12 +473,12 @@ class TF_Models(Graph_Entities):
             inputs_val.append(self.Normalized_Adjacency_Matrix)
 
         self.model.fit(inputs_train,
-                  self.data_splits['y_train'],
-                  batch_size=self.data_splits['x_train'].shape[0],
-                  epochs=epochs,
-                  validation_data=(inputs_val, self.data_splits['y_val']),
-                  callbacks=[early_stopping, model_checkpoint_callback,
-                             lr_schedule])
+                       self.data_splits['y_train'],
+                       batch_size=self.data_splits['x_train'].shape[0],
+                       epochs=epochs,
+                       validation_data=(inputs_val, self.data_splits['y_val']),
+                       callbacks=[early_stopping, model_checkpoint_callback,
+                                  lr_schedule])
 
         # Reloads the checkpoint with the lowest validation loss
         self.model.load_weights(checkpoint_filepath)
