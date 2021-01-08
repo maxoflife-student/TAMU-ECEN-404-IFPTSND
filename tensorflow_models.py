@@ -27,29 +27,51 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-def custom_mse(y_actual, y_pred):
 
-    squared_error = math.ops.squared_difference(y_actual, y_pred)
+def custom_mse(y_actual, y_pred):
+    # Let's try slicing y_actual to the end result?
+    y_actual = y_actual[:, -1:]
+
+    # tf.print(f"y_actual shape: {y_actual.shape}")
+    # tf.print(f"y_pred shape: {y_pred.shape}")
+    # input("######################### Wait #########################")
+
+    squared_error = math_ops.squared_difference(y_actual, y_pred)
     average_mse = kb.mean(squared_error, axis=-1)
 
     return average_mse
 
+
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
-def rank_loss_func(alpha=1):
-    def rlf(y_actual, y_pred):
-        # Slice the final predicted time step from the actual value
-        y_slice = y_actual[:, -1:]
+
+
+
+
+def rank_loss_func(alpha=1e-8):
+
+    global first_rank_loss
+    global first_mse
+    first_rank_loss = -3.14
+    first_mse = -3.14
+
+    def mse_component(y_actual, y_pred):
+        # Take the squared difference between the y_actual and y_pred
+        squared_difference = math_ops.squared_difference(y_actual, y_pred)
+        sd_mean = math_ops.reduce_mean(squared_difference)
+        return sd_mean
+
+    def rank_loss_component(y_actual, y_pred):
         # Calculate return ratio
-        return_ratio = tf.math.divide(tf.math.subtract(y_pred, y_slice), y_slice)
+        # return_ratio = tf.math.divide(tf.math.subtract(y_pred, y_actual), y_actual)
         # Create an array of all_ones so that we can calculate all permutations of subtractions
-        all_ones = tf.ones([y_slice.shape[0], 1])
+        all_ones = tf.ones([y_actual.shape[0], 1])
 
         # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
         # company
         pred_dif = tf.math.subtract(
-            tf.matmul(return_ratio, all_ones, transpose_b=True),
-            tf.matmul(all_ones, return_ratio, transpose_b=True)
+            tf.matmul(y_pred, all_ones, transpose_b=True),
+            tf.matmul(all_ones, y_pred, transpose_b=True)
         )
 
         # Creates an N x N matrix containing every actual return ratio for each company subtracted with every other
@@ -57,8 +79,8 @@ def rank_loss_func(alpha=1):
         # When RELU is applied later, correct predictions will not affect loss while incorrect predictions will affect
         # loss depending on how incorrect the prediction was
         actual_dif = tf.math.subtract(
-            tf.matmul(all_ones, y_slice, transpose_b=True),
-            tf.matmul(y_slice, all_ones, transpose_b=True)
+            tf.matmul(all_ones, y_actual, transpose_b=True),
+            tf.matmul(y_actual, all_ones, transpose_b=True)
         )
 
         # Using the above two qualities, the algorithm can be punished for incorrectly calculating when a company is
@@ -70,16 +92,19 @@ def rank_loss_func(alpha=1):
                 tf.multiply(pred_dif, actual_dif)
             )
         )
+        return rank_loss
 
-        # Divide the rank_loss by the total time-steps to equalize loss if the given time-steps are different
-        rank_loss = tf.divide(rank_loss, tf.constant(y_actual.shape[1], dtype=tf.float32))
+    def rlf(y_actual, y_pred):
 
-        # Take the squared difference between the y_actual and y_pred
-        squared_difference = math_ops.squared_difference(y_actual, y_pred)
-        # Average each of values, taking the magnitude
-        sd_mean = kb.mean(squared_difference, axis=-1)
+        # Slice the final predicted time step from the actual value
+        y_1 = y_actual[:, -1:]
 
-        loss = tf.cast(alpha, tf.float32) * rank_loss + sd_mean
+        rank_loss = rank_loss_component(y_1, y_pred)
+
+        mse = tf.losses.mean_squared_error(y_1, y_pred)
+
+        loss = tf.cast(100, tf.float32) * rank_loss + mse
+
         return loss
 
     # Return the RLF function instance
@@ -254,7 +279,7 @@ class TF_Models(Graph_Entities):
 
         loss_drop = widgets.Dropdown(
             value='mse',
-            options=['mse', 'rank_loss'],
+            options=['mse', 'rank_loss', 'custom_mse'],
             description='Loss Functions:',
             style=dict(description_width='initial'),
         )
@@ -274,7 +299,7 @@ class TF_Models(Graph_Entities):
         )
 
         butt_random = widgets.Checkbox(
-            value=True,
+            value=False,
             description="Random Seed",
             style=dict(description_width='initial'),
         )
@@ -317,6 +342,9 @@ class TF_Models(Graph_Entities):
         # By controlling the random starting weights, the models can be more accurately assessed against one another
         if not true_random:
             tf.random.set_seed(1337)
+
+        # Must be the same between runs
+        tf.random.set_seed(1337)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, decay=decay_rate)
 
@@ -435,6 +463,8 @@ class TF_Models(Graph_Entities):
         # Specify which loss function to use
         if loss_function == 'rank_loss':
             loss_function = rank_loss_func(1)
+        elif loss_function == 'custom_mse':
+            loss_function = custom_mse
 
         self.model.compile(loss=loss_function, optimizer=optimizer)
         self.model.summary()
