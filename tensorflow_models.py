@@ -27,21 +27,6 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-
-def custom_mse(y_actual, y_pred):
-    # Let's try slicing y_actual to the end result?
-    y_actual = y_actual[:, -1:]
-
-    # tf.print(f"y_actual shape: {y_actual.shape}")
-    # tf.print(f"y_pred shape: {y_pred.shape}")
-    # input("######################### Wait #########################")
-
-    squared_error = math_ops.squared_difference(y_actual, y_pred)
-    average_mse = kb.mean(squared_error, axis=-1)
-
-    return average_mse
-
-
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
 
@@ -63,15 +48,18 @@ def rank_loss_func(alpha=1e-8):
 
     def rank_loss_component(y_actual, y_pred):
         # Calculate return ratio
-        # return_ratio = tf.math.divide(tf.math.subtract(y_pred, y_actual), y_actual)
+        return_ratio = tf.math.divide(tf.math.subtract(y_pred, y_actual), y_actual)
+
+        # ground_truth =
+
         # Create an array of all_ones so that we can calculate all permutations of subtractions
         all_ones = tf.ones([y_actual.shape[0], 1])
 
         # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
         # company
         pred_dif = tf.math.subtract(
-            tf.matmul(y_pred, all_ones, transpose_b=True),
-            tf.matmul(all_ones, y_pred, transpose_b=True)
+            tf.matmul(return_ratio, all_ones, transpose_b=True),
+            tf.matmul(all_ones, return_ratio, transpose_b=True)
         )
 
         # Creates an N x N matrix containing every actual return ratio for each company subtracted with every other
@@ -99,11 +87,12 @@ def rank_loss_func(alpha=1e-8):
         # Slice the final predicted time step from the actual value
         y_1 = y_actual[:, -1:]
 
-        rank_loss = rank_loss_component(y_1, y_pred)
+        # rank_loss = rank_loss_component(y_1, y_pred)
 
         mse = tf.losses.mean_squared_error(y_1, y_pred)
 
-        loss = tf.cast(100, tf.float32) * rank_loss + mse
+        # loss = tf.cast(100, tf.float32) * rank_loss + mse
+        loss = mse
 
         return loss
 
@@ -217,6 +206,8 @@ class TF_Models(Graph_Entities):
         # the last day of XX_tf needs to be removed since we don't have a prediction for it
         self.XX_tf = tf.constant(XX_t[:, 0:-1, :])
 
+        # According to paper #2, the normalized price of each stock should be the output, not the return ratio
+        '''
         # In our project, the labels shouldn't be the actual price of the next day. It needs to be the return ratio
         # had we purchased the stock
         YY_tf = np.copy(YY_t)
@@ -230,9 +221,10 @@ class TF_Models(Graph_Entities):
                 # Those zeroes need to be made really small, but not actually 0 to avoid loss errors later
                 if YY_tf[e, t] == 0:
                     YY_tf[e, t] = 1e-10
+        '''
 
         loading_bar.close()
-        return tf.constant(YY_tf)
+        return tf.constant(YY_t)
 
     '''Splits the data into a training, validation, and testing set. The proportion of entries in each category
         can be set using the list. For example by default, 60% training, 15% validation, 25% testing. Axis specifies
@@ -367,7 +359,9 @@ class TF_Models(Graph_Entities):
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
             x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
+            x = tf.keras.layers.Dropout(0.8)(x)
             x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
+            x = tf.keras.layers.Dropout(0.8)(x)
             x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq], outputs=x)
 
