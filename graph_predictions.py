@@ -410,15 +410,20 @@ class Graph_Predictions():
 
         print(f"Total number of days: {self.x_test.shape[1]}")
 
-        for day in range(1, self.num_time_steps - 1):
+        for day in range(0, self.num_time_steps - 1):
 
-            # The model should only be able to see up to yesterday
-            seeable = self.x_test[:, 0:day, :]
+            # On the first day, the model should only see the validation set
+            # after that day, then the test set needs to be incrementally added in
+            if day > 0:
+                # The model should only be able to see up to yesterday
+                seeable = self.x_test[:, 0:day, :]
 
-            # Allow the model to see the validation set when predicting
-            # ~Triples prediction time
-            if expVis:
-                seeable = tf.concat([self.x_val, seeable], axis=1)
+                # Allow the model to see the validation set when predicting
+                # ~Triples prediction time
+                if expVis:
+                    seeable = tf.concat([self.x_val, seeable], axis=1)
+            else:
+                seeable = self.x_val
 
             # Make a prediction, the input changes depending on the model type
             if neural_net_type == 'lstm':
@@ -463,7 +468,9 @@ class Graph_Predictions():
         with open(f'./prediction_results/{model_name}_PM.json', 'w') as file:
             json.dump(results, file, indent=1)
 
-    def prediction_json_strategy(self, pm_name, name_override='', avoid_fall=True, average=1):
+    # This variation of the strategy execution assumes that the highest values in the prediction list are the best
+    # stock.
+    def prediction_json_strategy_max_entities(self, pm_name, name_override='', avoid_fall=True, average=1):
 
         print(f"\nLoading PM Model: '{pm_name}'")
 
@@ -488,7 +495,7 @@ class Graph_Predictions():
         # Only used if avoid_fall strategy
         losing_streak = -1
 
-        for day in range(1, self.num_time_steps - 1):
+        for day in range(0, self.num_time_steps - 1):
 
             # Add some feedback into the post-prediction algorithm
             if avoid_fall:
@@ -500,7 +507,7 @@ class Graph_Predictions():
                 break
 
             # Make a prediction
-            pred = list(pred_list[day - 1])
+            pred = list(pred_list[day])
 
             # If money was lost on the last decision, choose the next best options(s)
             if avoid_fall:
@@ -516,7 +523,85 @@ class Graph_Predictions():
             # Print out the day, how much money has currently been earned, and then which stock is about to be
             # purchased
             if day > 1:
-                print(f"Day: {day - 1}\t\tTotal: {int(total)} Buying: {[self.entities[c] for c in c_choices]}")
+                print(f"Day: {day}\t\tTotal: {int(total)} Buying: {[self.entities[c] for c in c_choices]}")
+
+            # Earn yesterday's money
+            total += yesterday_earning
+            # Lose the money from the total that is spent today
+            total -= self.increment
+            # Calculate the amount of money that will be earned tomorrow when sold
+            sum = 0
+            for c in c_choices:
+                sum = sum + self.buy_then_sell(c, day, self.increment / len(c_choices))
+            yesterday_earning = sum
+
+            total_by_day.append(total)
+
+        self.strategy_results[pm_name] = total_by_day
+        # Save the current strategy results
+        self.save_results()
+
+    # This variation of the strategy execution assumes that each value is simply a prediction of the next days price,
+    # so the highest ranked choices for the day need to be calculated from the closing price
+    def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1):
+
+        print(f"\nLoading PM Model: '{pm_name}'")
+
+        # Load in the prediction results as a dictionary
+        file = open(f'./prediction_results/{pm_name}.json', 'r')
+        pm = json.load(file)
+
+        # Create a list of lists with shape (N, t)
+        pred = [pm[c] for c in self.entities]
+        # Transpose the list so we can index it as (t, N)
+        pred = np.array(pred)
+        pred_list = np.transpose(pred)
+
+        if name_override:
+            pm_name = name_override
+
+        # Portfolio to start
+        total = self.starting_investment
+        yesterday_earning = 0
+        total_by_day = []
+
+        # Only used if avoid_fall strategy
+        losing_streak = -1
+
+        for day in range(0, self.num_time_steps - 1):
+
+            # Add some feedback into the post-prediction algorithm
+            if avoid_fall:
+                if yesterday_earning < self.increment:
+                    losing_streak += 1
+
+            # If bankrupt, stop the strategy
+            if total < 0:
+                break
+
+            # Make a prediction
+            pred = pred_list[day]
+
+            # Convert those predictions into return_ratios
+            actual = self.x_test[:, day, 0]
+            pred = tf.divide(tf.subtract(pred, actual), pred)
+            pred = list(pred)
+
+            # If money was lost on the last decision, choose the next best options(s)
+            if avoid_fall:
+                if yesterday_earning > self.increment:
+                    c_choices = [max_index(pred, i) for i in range(average)]
+                    losing_streak = 0
+                else:
+                    c_choices = [max_index(pred, i + losing_streak) for i in range(average)]
+
+            else:
+                c_choices = [max_index(pred, i) for i in range(average)]
+
+            # Print out the day, how much money has currently been earned, and then which stock is about to be
+            # purchased
+            if day > 1:
+                print(f"Day: {day}\t\tTotal: {int(total)} Buying: {[self.entities[c] for c in c_choices]}")
 
             # Earn yesterday's money
             total += yesterday_earning

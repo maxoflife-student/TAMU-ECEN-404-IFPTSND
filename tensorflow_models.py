@@ -27,33 +27,40 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
+
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
+def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
 
+    if rr_train.shape == rr_val.shape:
+        sys.exit("""This jank portion of code will cause an error because your validation and training set are
+                 the same size""")
 
+    def rlf(y_actual, y_pred):
 
+        # Slice the final predicted time step from the actual value
+        # This represents how many days into the future we're forecasting
+        y_actual = y_actual[:, -forecast:]
 
-def rank_loss_func(alpha=1e-8):
-
-    global first_rank_loss
-    global first_mse
-    first_rank_loss = -3.14
-    first_mse = -3.14
-
-    def mse_component(y_actual, y_pred):
-        # Take the squared difference between the y_actual and y_pred
-        squared_difference = math_ops.squared_difference(y_actual, y_pred)
-        sd_mean = math_ops.reduce_mean(squared_difference)
-        return sd_mean
-
-    def rank_loss_component(y_actual, y_pred):
         # Calculate return ratio
         return_ratio = tf.math.divide(tf.math.subtract(y_pred, y_actual), y_actual)
 
-        # ground_truth =
+        # If the size of the calculated return-ratios does not match, it is known whether we are
+        # in validation or in training (as long as validation and training are not the same size)
+        ground_truth = tf.constant(rr_train, dtype=tf.float32)
+        if y_actual.shape != rr_train.shape:
+            ground_truth = tf.constant(rr_val, dtype=tf.float32)
+
+        # We only want the ground_truth for the days that are being forecast
+        ground_truth = ground_truth[:, -forecast:]
+
+        ###############################################################
+        # Take the squared difference between the y_actual and y_pred
+        squared_difference = math_ops.squared_difference(ground_truth, return_ratio)
+        sd_mean = math_ops.reduce_mean(squared_difference)
 
         # Create an array of all_ones so that we can calculate all permutations of subtractions
-        all_ones = tf.ones([y_actual.shape[0], 1])
+        all_ones = tf.ones([y_actual.shape[0], 1], dtype=tf.float32)
 
         # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
         # company
@@ -67,8 +74,8 @@ def rank_loss_func(alpha=1e-8):
         # When RELU is applied later, correct predictions will not affect loss while incorrect predictions will affect
         # loss depending on how incorrect the prediction was
         actual_dif = tf.math.subtract(
-            tf.matmul(all_ones, y_actual, transpose_b=True),
-            tf.matmul(y_actual, all_ones, transpose_b=True)
+            tf.matmul(all_ones, ground_truth, transpose_b=True),
+            tf.matmul(ground_truth, all_ones, transpose_b=True)
         )
 
         # Using the above two qualities, the algorithm can be punished for incorrectly calculating when a company is
@@ -80,19 +87,9 @@ def rank_loss_func(alpha=1e-8):
                 tf.multiply(pred_dif, actual_dif)
             )
         )
-        return rank_loss
 
-    def rlf(y_actual, y_pred):
-
-        # Slice the final predicted time step from the actual value
-        y_1 = y_actual[:, -1:]
-
-        # rank_loss = rank_loss_component(y_1, y_pred)
-
-        mse = tf.losses.mean_squared_error(y_1, y_pred)
-
-        # loss = tf.cast(100, tf.float32) * rank_loss + mse
-        loss = mse
+        # Multiply the rank-loss term by alpha AND add the MSE to create total loss
+        loss = tf.cast(alpha, tf.float32) * rank_loss + sd_mean
 
         return loss
 
@@ -135,6 +132,8 @@ class TF_Models(Graph_Entities):
             self.Normalized_Adjacency_Matrix = super()._generate_normalized_ajacency_matrix()
             self.XX_tf = self._load_data_into_TF()
             self.YY_tf = self._create_labels()
+            # Create the ground truth return ratios
+            self.RR_tf = tf.divide(tf.subtract(self.YY_tf, self.XX_tf[:, :, 0]), self.XX_tf[:, :, 0])
 
             self.save_data_and_labels()
         else:
@@ -145,6 +144,7 @@ class TF_Models(Graph_Entities):
             self.Normalized_Adjacency_Matrix = self.load_obj['Normalized_Adjacency_Matrix']
             self.XX_tf = self.load_obj['XX_tf']
             self.YY_tf = self.load_obj['YY_tf']
+            self.RR_tf = self.load_obj['RR_tf']
 
         # Stores the last model affected in memory
         self.model = None
@@ -179,7 +179,7 @@ class TF_Models(Graph_Entities):
             # Increment the loading bar
             bar.value += 1
 
-        XX_t = tf.constant(XX_t)
+        XX_t = tf.constant(XX_t, dtype=tf.float32)
         loading_bar.close()
         return XX_t
 
@@ -252,10 +252,12 @@ class TF_Models(Graph_Entities):
                                           axis=axis)
         y_train, y_val, y_test = tf.split(self.YY_tf, split_windows(self.YY_tf.shape[1], perc_split),
                                           axis=axis)
+        rr_train, rr_val, rr_test = tf.split(self.RR_tf, split_windows(self.YY_tf.shape[1], perc_split),
+                                             axis=axis)
 
-        return {'x_train': x_train, 'y_train': y_train,
-                'x_val': x_val, 'y_val': y_val,
-                'x_test': x_test, 'y_test': y_test}
+        return {'x_train': x_train, 'y_train': y_train, 'rr_train': rr_train,
+                'x_val': x_val, 'y_val': y_val, 'rr_val': rr_val,
+                'x_test': x_test, 'y_test': y_test, 'rr_test:': rr_test}
 
     '''Displays a dropdown selection of model parameters to select from
         When the generate button is pressed, that model is saved as a part
@@ -456,9 +458,10 @@ class TF_Models(Graph_Entities):
 
         # Specify which loss function to use
         if loss_function == 'rank_loss':
-            loss_function = rank_loss_func(1)
+            loss_function = rank_loss_func(rr_train=self.data_splits['rr_train'], rr_val=self.data_splits['rr_val'],
+                                           alpha=0)
         elif loss_function == 'custom_mse':
-            loss_function = custom_mse
+            loss_function = None
 
         self.model.compile(loss=loss_function, optimizer=optimizer)
         self.model.summary()
@@ -532,7 +535,7 @@ class TF_Models(Graph_Entities):
 
     def save_data_and_labels(self):
         obj = {'XX_tf': self.XX_tf, 'YY_tf': self.YY_tf, 'entities': self.entities, 'entities_idx': self.entities_idx,
-               'relations_dict': self.relations_dict,
+               'relations_dict': self.relations_dict, 'RR_tf': self.RR_tf,
                'Normalized_Adjacency_Matrix': self.Normalized_Adjacency_Matrix}
 
         pickle.dump(obj, open(self.data_path + fr'/parsed_data.p', 'wb'))
