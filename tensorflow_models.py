@@ -89,7 +89,13 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
         )
 
         # Multiply the rank-loss term by alpha AND add the MSE to create total loss
-        loss = tf.cast(alpha, tf.float32) * rank_loss + sd_mean
+        # loss = tf.cast(alpha, tf.float32) * rank_loss + sd_mean
+
+        # kb.print_tensor(sd_mean)
+        # kb.print_tensor(tf.cast(10000, tf.float32) * rank_loss)
+
+        # Attempting to only use the rank_loss function
+        loss = tf.cast(alpha, tf.float32) * rank_loss
 
         return loss
 
@@ -339,6 +345,7 @@ class TF_Models(Graph_Entities):
 
         # Must be the same between runs
         tf.random.set_seed(1337)
+        tf.random.set_seed(420)
 
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, decay=decay_rate)
 
@@ -361,9 +368,9 @@ class TF_Models(Graph_Entities):
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
             x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
-            x = tf.keras.layers.Dropout(0.8)(x)
+            x = tf.keras.layers.Dropout(0.25)(x)
             x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
-            x = tf.keras.layers.Dropout(0.8)(x)
+            x = tf.keras.layers.Dropout(0.25)(x)
             x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq], outputs=x)
 
@@ -459,7 +466,7 @@ class TF_Models(Graph_Entities):
         # Specify which loss function to use
         if loss_function == 'rank_loss':
             loss_function = rank_loss_func(rr_train=self.data_splits['rr_train'], rr_val=self.data_splits['rr_val'],
-                                           alpha=0)
+                                           alpha=1)
         elif loss_function == 'custom_mse':
             loss_function = None
 

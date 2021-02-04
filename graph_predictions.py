@@ -495,7 +495,7 @@ class Graph_Predictions():
         # Only used if avoid_fall strategy
         losing_streak = -1
 
-        for day in range(0, self.num_time_steps - 1):
+        for day in range(0, self.num_time_steps - 2):
 
             # Add some feedback into the post-prediction algorithm
             if avoid_fall:
@@ -522,7 +522,7 @@ class Graph_Predictions():
 
             # Print out the day, how much money has currently been earned, and then which stock is about to be
             # purchased
-            if day > 1:
+            if day > 0:
                 print(f"Day: {day}\t\tTotal: {int(total)} Buying: {[self.entities[c] for c in c_choices]}")
 
             # Earn yesterday's money
@@ -568,7 +568,7 @@ class Graph_Predictions():
         # Only used if avoid_fall strategy
         losing_streak = -1
 
-        for day in range(0, self.num_time_steps - 1):
+        for day in range(0, self.num_time_steps - 2):
 
             # Add some feedback into the post-prediction algorithm
             if avoid_fall:
@@ -600,7 +600,7 @@ class Graph_Predictions():
 
             # Print out the day, how much money has currently been earned, and then which stock is about to be
             # purchased
-            if day > 1:
+            if day > 0:
                 print(f"Day: {day}\t\tTotal: {int(total)} Buying: {[self.entities[c] for c in c_choices]}")
 
             # Earn yesterday's money
