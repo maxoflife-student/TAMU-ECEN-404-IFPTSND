@@ -264,7 +264,7 @@ class TF_Models(Graph_Entities):
 
         return {'x_train': x_train, 'y_train': y_train, 'rr_train': rr_train,
                 'x_val': x_val, 'y_val': y_val, 'rr_val': rr_val,
-                'x_test': x_test, 'y_test': y_test, 'rr_test:': rr_test}
+                'x_test': x_test, 'y_test': y_test, 'rr_test': rr_test}
 
     '''Displays a dropdown selection of model parameters to select from
         When the generate button is pressed, that model is saved as a part

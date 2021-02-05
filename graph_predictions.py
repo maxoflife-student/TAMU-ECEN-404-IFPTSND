@@ -48,6 +48,7 @@ class Graph_Predictions():
         self.entities = tensorflow_model_obj.entities
         self.x_test = tensorflow_model_obj.data_splits['x_test']
         self.x_val = tensorflow_model_obj.data_splits['x_val']
+        self.rr_test = tensorflow_model_obj.data_splits['rr_test']
         self.Normalized_Adjacency_Matrix = tensorflow_model_obj.Normalized_Adjacency_Matrix
 
         # Data used in our specific strategy implementation method
@@ -58,6 +59,9 @@ class Graph_Predictions():
 
         # To calculate MSE, YY_tf is needed from the tensorflow model
         self.YY_tf = tensorflow_model_obj.YY_tf
+
+        # Daily return ratios have already been calculated, why redo them?
+        self.RR_tf = tensorflow_model_obj.RR_tf
 
         # Data saved in memory
         self.strategy_results = {}
@@ -109,7 +113,7 @@ class Graph_Predictions():
         self.strat_sel = strat_sel
 
         # Create some colors for the graphed lines to cycle through
-        colors_list = ['f30000', 'f38c00', 'FDD20E', '72e400', '00e4c1', '0076f3', '9700f3', 'f300c3', '990000',
+        colors_list = ['0000FF', 'f38c00', 'FDD20E', '72e400', '00e4c1', '0076f3', '9700f3', 'f300c3', '990000',
                        'd08800', '05aa00', '00a0aa', '7600aa', '830000', 'f38c00', '995900', '7e6701', '264d00',
                        '004d41', '003166', '800066']
         colors_list = [f'#{i}' for i in colors_list]
@@ -134,6 +138,12 @@ class Graph_Predictions():
                 line_styles.append('dash_dotted')
 
         # Insert the black color used on the selected entity
+        colors_list.insert(0, '#f30000')
+
+        # Insert the black color used on the selected entity
+        colors_list.insert(0, '#008000')
+
+        # Insert the black color used on the selected entity
         colors_list.insert(0, '#000000')
 
         self.max_l = 0
@@ -156,7 +166,7 @@ class Graph_Predictions():
                 range(1, len(strat_sel))]
         # Line settings for the first entity
         line.insert(0, Lines(labels=[strat_sel[0]], x=x_data, y=y_data[0], scales={'x': x_scale, 'y': y_scale},
-                             colors=[colors_list[0]], display_legend=True, stroke_width=6))
+                             colors=[colors_list[0]], display_legend=True, stroke_width=2))
 
         fig = Figure(marks=line, axes=[ax_x, ax_y], title='Comparing Trading Strategies Over the Same Test Set',
                      colors=['red'], legend_location='top-left', legend_text={'font-size': 18})
@@ -583,7 +593,7 @@ class Graph_Predictions():
             pred = pred_list[day]
 
             # Convert those predictions into highest difference
-            actual = self.x_test[:, day-1, 0]
+            actual = self.x_test[:, day - 1, 0]
             pred = tf.divide(tf.subtract(pred, actual), pred)
             pred = list(pred)
 
@@ -638,7 +648,7 @@ class Graph_Predictions():
 
         daily_mse = []
         print(f"Num of time steps: {self.num_time_steps} | YY_tf: {self.YY_tf.shape}")
-        for day in range(0, self.num_time_steps-2):
+        for day in range(0, self.num_time_steps - 2):
             # Make a prediction
             pred = list(pred_list[day])
 
@@ -647,4 +657,25 @@ class Graph_Predictions():
 
         self.strategy_results['MSE_Calc_' + pm_name] = daily_mse
         # Save the current strategy results
+        self.save_results()
+
+    def generate_upper_lower_avg_bounds(self):
+
+        daily_highest_rr = []
+        for day in range(self.num_time_steps):
+            daily_highest_rr.append(np.amax(self.rr_test[:, day]))
+
+        self.strategy_results['000_Highest_RR_Possible'] = daily_highest_rr
+
+        daily_lowest_rr = []
+        for day in range(self.num_time_steps):
+            daily_lowest_rr.append(np.amin(self.rr_test[:, day]))
+
+        self.strategy_results['000_Lowest_RR_Possible'] = daily_lowest_rr
+
+        daily_avg_rr = []
+        for day in range(self.num_time_steps):
+            daily_avg_rr.append(np.mean(self.rr_test[:, day]))
+
+        self.strategy_results['000_Avg_RR'] = daily_avg_rr
         self.save_results()
