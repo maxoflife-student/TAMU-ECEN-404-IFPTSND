@@ -28,6 +28,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
+
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
 def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
@@ -347,11 +348,17 @@ class TF_Models(Graph_Entities):
         tf.random.set_seed(1337)
         tf.random.set_seed(420)
 
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate, decay=decay_rate)
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=True,
+            name='Adam'
+        )
 
         '''Types of model inputs'''
         # Sequential Input Data
-        input_seq = keras.Input(shape=self.XX_tf.shape[1:])
+
+        # input_seq = keras.Input(shape=self.XX_tf.shape[1:])
+        # Originally XX_tf would always be the maximum size, but now we need it to work with split data that doesn't contain the whole
+        input_seq = keras.Input(shape=(self.data_splits['x_train'].shape[1] + self.data_splits['x_val'].shape[1] + self.data_splits['x_test'].shape[1], self.data_splits['x_train'].shape[2]))
         # Normalized Ajacency Matrix
         if gcn_shape:
             input_rel = keras.Input(shape=self.Normalized_Adjacency_Matrix.shape[0])
@@ -488,18 +495,27 @@ class TF_Models(Graph_Entities):
 
     def train_model(self, epochs, learning_rate=1e-5):
 
+        # New Tensorboard Code
+        log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f'--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+
         self.epochs_n += epochs
 
         # If the validation loss doesn't improve after 3 epochs, stop training
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, mode='min')
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=50, mode='min')
+        #
+        # # Together these functions allow the train_model feature to update the learning_rate without
+        # # re-establishing the model
+        # def scheduler(epoch, lr):
+        #     return learning_rate
+        #
+        # lr_schedule = tf.keras.callbacks.LearningRateScheduler(
+        #     scheduler, verbose=0
+        # )
 
-        # Together these functions allow the train_model feature to update the learning_rate without
-        # re-establishing the model
-        def scheduler(epoch, lr):
-            return learning_rate
-
-        lr_schedule = tf.keras.callbacks.LearningRateScheduler(
-            scheduler, verbose=0
+        RLROP = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss', factor=0.7, patience=10, verbose=0,
+            mode='min', min_delta=0.0001, cooldown=1000, min_lr=5e-7,
         )
 
         # Callback for loading the best validation loss checkpoint
@@ -522,8 +538,8 @@ class TF_Models(Graph_Entities):
                        batch_size=self.data_splits['x_train'].shape[0],
                        epochs=epochs,
                        validation_data=(inputs_val, self.data_splits['y_val']),
-                       callbacks=[early_stopping, model_checkpoint_callback,
-                                  lr_schedule])
+                       callbacks=[RLROP, model_checkpoint_callback, early_stopping,
+                                  tensorboard_callback])
 
         # Reloads the checkpoint with the lowest validation loss
         self.model.load_weights(checkpoint_filepath)

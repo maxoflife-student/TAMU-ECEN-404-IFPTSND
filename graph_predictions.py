@@ -568,7 +568,7 @@ class Graph_Predictions():
         # Only used if avoid_fall strategy
         losing_streak = -1
 
-        for day in range(0, self.num_time_steps - 2):
+        for day in range(1, self.num_time_steps - 2):
 
             # Add some feedback into the post-prediction algorithm
             if avoid_fall:
@@ -582,8 +582,8 @@ class Graph_Predictions():
             # Make a prediction
             pred = pred_list[day]
 
-            # Convert those predictions into return_ratios
-            actual = self.x_test[:, day, 0]
+            # Convert those predictions into highest difference
+            actual = self.x_test[:, day-1, 0]
             pred = tf.divide(tf.subtract(pred, actual), pred)
             pred = list(pred)
 
