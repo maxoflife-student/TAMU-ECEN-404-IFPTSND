@@ -52,6 +52,9 @@ class Graph_Predictions():
         self.rr_test = tensorflow_model_obj.data_splits['rr_test']
         self.Normalized_Adjacency_Matrix = tensorflow_model_obj.Normalized_Adjacency_Matrix
 
+        # Used to quickly recall the next file location for validating large sets
+        self.model_name = None
+
         # Data used in our specific strategy implementation method
         self.increment = 5e4
         self.starting_investment = 2 * self.increment
@@ -477,7 +480,9 @@ class Graph_Predictions():
         # If x_test is always assumed to be at the tail of each dataset, then
         results['x_test_shape'] = list(self.x_test.shape)
 
-        with open(f'./prediction_results/{model_name}_PM.json', 'w') as file:
+        self.model_name = f'{model_name}_PM.json'
+
+        with open(f'./prediction_results/{self.model_name}', 'w') as file:
             json.dump(results, file, indent=1)
 
     # This variation of the strategy execution assumes that the highest values in the prediction list are the best
@@ -485,6 +490,10 @@ class Graph_Predictions():
     def prediction_json_strategy_max_entities(self, pm_name, name_override='', avoid_fall=True, average=1):
 
         print(f"\nLoading PM Model: '{pm_name}'")
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
 
         # Load in the prediction results as a dictionary
         file = open(f'./prediction_results/{pm_name}.json', 'r')
@@ -558,6 +567,10 @@ class Graph_Predictions():
     def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1):
 
         print(f"\nLoading PM Model: '{pm_name}'")
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
 
         # Load in the prediction results as a dictionary
         file = open(f'./prediction_results/{pm_name}.json', 'r')
@@ -635,6 +648,10 @@ class Graph_Predictions():
 
         print(f"\nLoading PM Model: '{pm_name}'")
 
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
         # Load in the prediction results as a dictionary
         file = open(f'./prediction_results/{pm_name}.json', 'r')
         pm = json.load(file)
@@ -696,6 +713,10 @@ class Graph_Predictions():
             daily_avg_rr = self.strat_dict['000_Avg_RR.p']
         except KeyError:
             self.generate_upper_lower_avg_bounds()
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
 
         # Load in the prediction results as a dictionary
         file = open(f'./prediction_results/{pm_name}.json', 'r')
@@ -820,6 +841,10 @@ class Graph_Predictions():
             os.mkdir(f'./{datablock_folder}')
         except:
             None
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
 
         with open(f'./{datablock_folder}/{pm_name}_DATABLOCK.json', 'w') as file:
             json.dump(json_file_save, file, indent=1)

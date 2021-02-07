@@ -59,7 +59,8 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, beta=1, forecast=1):
         # squared_difference = math_ops.squared_difference(ground_truth, return_ratio)
         # sd_mean = math_ops.reduce_mean(squared_difference)
         # mse = mean_squared_error(ground_truth.numpy(), return_ratio.numpy())
-        mse = 0
+        mse = tf.keras.losses.mean_squared_error(ground_truth, return_ratio)
+
 
         # Create an array of all_ones so that we can calculate all permutations of subtractions
         all_ones = tf.ones([y_actual.shape[0], 1], dtype=tf.float32)
@@ -349,9 +350,10 @@ class TF_Models(Graph_Entities):
         # Must be the same between runs
         tf.random.set_seed(1337)
         tf.random.set_seed(420)
+        tf.random.set_seed(17)
 
         optimizer = tf.keras.optimizers.Adam(
-            learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=True,
+            learning_rate=0.0006, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=True,
             name='Adam'
         )
 
@@ -505,10 +507,8 @@ class TF_Models(Graph_Entities):
             "%Y%m%d-%H%M%S") + f'--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
-        self.epochs_n += epochs
-
         # If the validation loss doesn't improve after 3 epochs, stop training
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=50, mode='min')
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=70, mode='min')
         #
         # # Together these functions allow the train_model feature to update the learning_rate without
         # # re-establishing the model
@@ -520,8 +520,8 @@ class TF_Models(Graph_Entities):
         # )
 
         RLROP = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.7, patience=10, verbose=0,
-            mode='min', min_delta=0.0001, cooldown=1000, min_lr=5e-7,
+            monitor='val_loss', factor=0.8, patience=1, verbose=0,
+            mode='min', min_delta=0.0001, cooldown=1000, min_lr=1e-6,
         )
 
         # Callback for loading the best validation loss checkpoint
