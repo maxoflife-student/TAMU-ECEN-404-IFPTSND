@@ -22,6 +22,8 @@ from IPython.display import display
 
 import warnings
 import os
+import math
+
 from sklearn.metrics import mean_squared_error
 
 warnings.filterwarnings('ignore')
@@ -60,7 +62,6 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, beta=1, forecast=1):
         # sd_mean = math_ops.reduce_mean(squared_difference)
         # mse = mean_squared_error(ground_truth.numpy(), return_ratio.numpy())
         mse = tf.keras.losses.mean_squared_error(ground_truth, return_ratio)
-
 
         # Create an array of all_ones so that we can calculate all permutations of subtractions
         all_ones = tf.ones([y_actual.shape[0], 1], dtype=tf.float32)
@@ -163,6 +164,10 @@ class TF_Models(Graph_Entities):
         self.date_t = None
         self.hidden_units = None
         self.model_name = None
+
+        self.history = None
+        self.schedule_function = None
+        self.last_hoorah = True
 
         # Automatically splits the data
         self.data_splits = self.split_data()
@@ -500,29 +505,89 @@ class TF_Models(Graph_Entities):
         learning rate scheduler, this training can be run multple times on the same model with different learning rates.
         Additionally, the best model will be selected based on the validation set to avoid worry of over-training'''
 
-    def train_model(self, epochs, learning_rate=1e-5):
+    def train_model_loop(self, epoch_batches, learning_rate=1e-4):
+
+        def model_continue_check(history, last_hoorah):
+            print("#" * 125)
+            last_epochs = history.history['val_loss']
+            last_lr = history.history['lr'][0]
+
+            e_max = np.max(last_epochs)
+            e_min = np.min(last_epochs)
+
+            # In the case were learning_rate might be too slow,
+            # Continue the loop, increase the learning rate
+            if last_epochs[-1] == e_min:
+                new_lr = last_lr * 1.6
+                print(f'Increasing learning rate to: {"{:.3e}".format(new_lr)}')
+
+                def scheduler(epoch, lr):
+                    return new_lr
+
+                return last_hoorah, scheduler, True
+
+            # If the last item was not the minimum, but the min and max value are VERY close to each other
+            # Then the bottom has probably been found
+            if (abs(e_max - e_min) / e_max) <= 0.1:
+
+                # Changed my mind on Last Hoorah, removing
+                last_hoorah = False
+
+                if last_hoorah:
+                    print('Attempting Large LR Increase in case bad Minimum Found')
+                    new_lr = last_lr * 10
+
+                    def scheduler(epoch, lr):
+                        return new_lr
+
+                    return False, scheduler, True
+                # Otherwise, end the loop
+                else:
+                    return None, None, False
+
+            # In the case were learning_rate might be too fast,
+            # Continue the loop, decrease the learning rate
+            if last_epochs[-1] != np.min(last_epochs):
+                new_lr = last_lr * 0.333333
+
+                # Unless we're on the last hoorah, in which case the large increase from earlier needs to be removed
+                new_lr = last_lr / 10
+
+                print(f'Decreasing learning rate to: {"{:.3e}".format(new_lr)}')
+
+                def scheduler(epoch, lr):
+                    return new_lr
+
+                # If the best epoch is only the first in the list, then the hoorah failed
+                if last_epochs[0] == np.min(last_epochs):
+                    newrah = False
+                else:
+                    newrah = True
+                return newrah, scheduler, True
+
+            # In some weird case that is unaccounted for, stop training
+            print('######Error?: No Statement Reached, Training Halted######')
+            return None, None, False
 
         # New Tensorboard Code
         log_dir = "logs/fit/" + datetime.datetime.now().strftime(
             "%Y%m%d-%H%M%S") + f'--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
-        # If the validation loss doesn't improve after 3 epochs, stop training
-        early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=70, mode='min')
-        #
+        # If the validation loss doesn't improve after X epochs, stop training
+        # early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=70, mode='min')
+
         # # Together these functions allow the train_model feature to update the learning_rate without
         # # re-establishing the model
-        # def scheduler(epoch, lr):
-        #     return learning_rate
-        #
-        # lr_schedule = tf.keras.callbacks.LearningRateScheduler(
-        #     scheduler, verbose=0
-        # )
+        def scheduler(epoch, lr):
+            return learning_rate
 
-        RLROP = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.8, patience=1, verbose=0,
-            mode='min', min_delta=0.0001, cooldown=1000, min_lr=1e-6,
-        )
+        self.schedule_function = scheduler
+
+        # RLROP = tf.keras.callbacks.ReduceLROnPlateau(
+        #     monitor='val_loss', factor=0.8, patience=1, verbose=0,
+        #     mode='min', min_delta=0.0001, cooldown=1000, min_lr=1e-6,
+        # )
 
         # Callback for loading the best validation loss checkpoint
         checkpoint_filepath = './tmp/checkpoint'
@@ -539,17 +604,26 @@ class TF_Models(Graph_Entities):
             inputs_train.append(self.Normalized_Adjacency_Matrix)
             inputs_val.append(self.Normalized_Adjacency_Matrix)
 
-        history = self.model.fit(inputs_train,
-                                 self.data_splits['y_train'],
-                                 batch_size=self.data_splits['x_train'].shape[0],
-                                 epochs=epochs,
-                                 validation_data=(inputs_val, self.data_splits['y_val']),
-                                 callbacks=[RLROP, model_checkpoint_callback, early_stopping,
-                                            tensorboard_callback])
-        self.epochs_n = len(history.history['loss'])
+        loop = True
+        while loop:
+            self.history = self.model.fit(inputs_train,
+                                          self.data_splits['y_train'],
+                                          batch_size=self.data_splits['x_train'].shape[0],
+                                          epochs=epoch_batches,
+                                          validation_data=(inputs_val, self.data_splits['y_val']),
+                                          callbacks=[model_checkpoint_callback,
+                                                     tensorboard_callback,
+                                                     tf.keras.callbacks.LearningRateScheduler(self.schedule_function,
+                                                                                              verbose=0)])
 
-        # Reloads the checkpoint with the lowest validation loss
-        self.model.load_weights(checkpoint_filepath)
+            # Keep track of the number of epochs we've trained
+            self.epochs_n = len(self.history.history['loss']) + self.epochs_n
+
+            # Reloads the checkpoint with the lowest validation loss
+            self.model.load_weights(checkpoint_filepath)
+
+            self.last_hoorah, self.schedule_function, loop = model_continue_check(self.history, self.last_hoorah)
+
         self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
 
     '''Saves the model that is currently loaded to the specified directory. Tags can be given to the model and the
