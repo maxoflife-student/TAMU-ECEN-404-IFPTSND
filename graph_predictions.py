@@ -19,6 +19,7 @@ import pickle
 import json
 import warnings
 import os
+from sklearn.metrics import mean_squared_error
 
 import numpy as np
 
@@ -197,6 +198,7 @@ class Graph_Predictions():
     def save_results(self):
         for key, value in self.strategy_results.items():
             pickle.dump(value, open(self.results_path + fr'/{key}.p', 'wb'))
+        self.update_strats()
 
     '''Given a company, day, and amount, returns the amount of money earned from buying it and then selling it
         the next day'''
@@ -678,4 +680,150 @@ class Graph_Predictions():
             daily_avg_rr.append(np.mean(self.rr_test[:, day]))
 
         self.strategy_results['000_Avg_RR'] = daily_avg_rr
+        self.save_results()
+
+    # This variation of the strategy execution assumes that each value is simply a prediction of the next days price,
+    # so the highest ranked choices for the day need to be calculated from the closing price
+
+    # Saves the real RR given our predictions, the MSE between predicted RR and true RR, the Mean-Reciprocal-Rank
+    # and the stock choice for the day
+    def generate_model_diagnostics(self, pm_name, name_override='', datablock_folder='RL_validation_set'):
+
+        # If these values haven't been calculated on this testing set yet, calculate them
+        try:
+            daily_lowest_rr = self.strat_dict['000_Lowest_RR_Possible.p']
+            daily_highest_rr = self.strat_dict['000_Highest_RR_Possible.p']
+            daily_avg_rr = self.strat_dict['000_Avg_RR.p']
+        except KeyError:
+            self.generate_upper_lower_avg_bounds()
+
+        # Load in the prediction results as a dictionary
+        file = open(f'./prediction_results/{pm_name}.json', 'r')
+        pm = json.load(file)
+
+        # Create a list of lists with shape (N, t)
+        pred = [pm[c] for c in self.entities]
+        # Transpose the list so we can index it as (t, N)
+        pred = np.array(pred)
+        pred_list = np.transpose(pred)
+
+        if name_override:
+            pm_name = name_override
+
+        # Saves all RR values
+        rr_list = []
+        # Saves the company choices at each day
+        entity_choices_list = []
+        # Saves the MSE
+        mse_list = []
+        # Saves the Rank-Loss
+        mrr_list = []
+
+        # print("Day: ", end='')
+        for day in range(0, self.num_time_steps - 2):
+            # print(f"{day}", end='|')
+            # Make a prediction for the price on day 0
+            # Which means only the testing set has been seen
+            pred = pred_list[day]
+
+            if day == 0:
+                yesterday_price = self.x_val[:, -1, 0]
+            else:
+                yesterday_price = self.x_test[:, day - 1, 0]
+
+            # Convert those predictions into highest return_ratio
+            pred = tf.divide(tf.subtract(pred, yesterday_price), pred)
+            top_choice = np.argmax(pred)
+            entity_choices_list.append(int(top_choice))
+
+            choice_return_ratio = (self.x_test[top_choice, day + 1, 0] - self.x_test[top_choice, day, 0]) / self.x_test[
+                top_choice, day + 1, 0]
+            rr_list.append(float(choice_return_ratio))
+
+            # Get the MSE
+            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day])))
+
+            # Calculate the MRR
+            # Create lists for the predicted return ratios and actual return ratios
+            predictions = pred.numpy()
+            return_ratios = self.rr_test[:, day].numpy()
+
+            # This algorithm is very fast for accurate models, possibly slow for inaccurate models
+            # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
+            # as the ACTUAL highest return_ratio, then it lowers this value past the previous minimum and
+            # searches for the next maximum. It repeats this until it determines the rank position
+            actual_top = np.argmax(return_ratios)
+            actual_bottom = np.argmin(predictions)
+            count = 1
+            for i in range(len(predictions)):
+                inner_max = np.argmax(predictions)
+                if inner_max == actual_top:
+                    break
+                else:
+                    count += 1
+                    predictions[inner_max] = predictions[actual_bottom] - 1
+            mrr_list.append(float(1 / count))
+
+            # This method will be slow regardless, but MIGHT be better on a totally random model
+            # # Add 0, 1, 2, 3... to each value to remember each companies return ratio
+            # predictions = list(zip(range(len(predictions)), predictions))
+            # return_ratios = list(zip(range(len(return_ratios)), return_ratios))
+            #
+            # # Sort the list high to low for the return ratios
+            # predictions.sort(key=lambda x: x[1], reverse=True)
+            # return_ratios.sort(key=lambda x: x[1], reverse=True)
+            #
+            # # Traverse the predictions list until you reach the best choice.
+            # actual_best_choice_index = return_ratios[0][0]
+            # count = 1
+            # for i in predictions:
+            #     if i[0] == actual_best_choice_index:
+            #         break
+            #     else:
+            #         count += 1
+            # mrr_list.append(1 / count)
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set(entity_choices_list)) / self.x_test.shape[1])
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean(mrr_list))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        test_set_low = np.mean(self.strat_dict['000_Lowest_RR_Possible.p'])
+        test_set_high = np.mean(self.strat_dict['000_Highest_RR_Possible.p'])
+        test_set_average = np.mean(self.strat_dict['000_Avg_RR.p'])
+
+        avg_rr = np.mean(rr_list)
+        if avg_rr > 0:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_high - test_set_average))
+        else:
+            best_potential_score = float((avg_rr - test_set_average) / test_set_low - test_set_average) * -1
+
+        print(test_set_low, test_set_high, test_set_average, avg_rr)
+
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list, "Best_Potential_Score": best_potential_score
+        }
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{datablock_folder}')
+        except:
+            None
+
+        with open(f'./{datablock_folder}/{pm_name}_DATABLOCK.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        self.strategy_results['RR_' + pm_name] = rr_list
+        # Save the current strategy results
         self.save_results()

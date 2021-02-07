@@ -22,17 +22,16 @@ from IPython.display import display
 
 import warnings
 import os
+from sklearn.metrics import mean_squared_error
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
-
 # By specifying the alpha value of the first function, we can return a rank_loss_function with a certain value
 # for alpha that can be called in any instance
-def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
-
+def rank_loss_func(rr_train, rr_val, alpha=1e-6, beta=1, forecast=1):
     if rr_train.shape == rr_val.shape:
         sys.exit("""This jank portion of code will cause an error because your validation and training set are
                  the same size""")
@@ -57,8 +56,10 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
 
         ###############################################################
         # Take the squared difference between the y_actual and y_pred
-        squared_difference = math_ops.squared_difference(ground_truth, return_ratio)
-        sd_mean = math_ops.reduce_mean(squared_difference)
+        # squared_difference = math_ops.squared_difference(ground_truth, return_ratio)
+        # sd_mean = math_ops.reduce_mean(squared_difference)
+        # mse = mean_squared_error(ground_truth.numpy(), return_ratio.numpy())
+        mse = 0
 
         # Create an array of all_ones so that we can calculate all permutations of subtractions
         all_ones = tf.ones([y_actual.shape[0], 1], dtype=tf.float32)
@@ -96,7 +97,7 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, forecast=1):
         # kb.print_tensor(tf.cast(10000, tf.float32) * rank_loss)
 
         # Attempting to only use the rank_loss function
-        loss = tf.cast(alpha, tf.float32) * rank_loss
+        loss = (tf.cast(alpha, tf.float32) * rank_loss) + (mse * beta)
 
         return loss
 
@@ -160,6 +161,7 @@ class TF_Models(Graph_Entities):
         self.loss_t = None
         self.date_t = None
         self.hidden_units = None
+        self.model_name = None
 
         # Automatically splits the data
         self.data_splits = self.split_data()
@@ -319,7 +321,7 @@ class TF_Models(Graph_Entities):
         button.on_click(on_button_clicked)
 
     def _generate_model(self, model_type, loss_function, activation, hidden_units, true_random,
-                        learning_rate=1e-5, decay_rate=1e-6):
+                        learning_rate=1e-5, decay_rate=1e-6, alpha=1, beta=1):
 
         if os.path.exists('./tmp'):
             shutil.rmtree('./tmp')
@@ -358,7 +360,10 @@ class TF_Models(Graph_Entities):
 
         # input_seq = keras.Input(shape=self.XX_tf.shape[1:])
         # Originally XX_tf would always be the maximum size, but now we need it to work with split data that doesn't contain the whole
-        input_seq = keras.Input(shape=(self.data_splits['x_train'].shape[1] + self.data_splits['x_val'].shape[1] + self.data_splits['x_test'].shape[1], self.data_splits['x_train'].shape[2]))
+        input_seq = keras.Input(shape=(
+            self.data_splits['x_train'].shape[1] + self.data_splits['x_val'].shape[1] +
+            self.data_splits['x_test'].shape[1],
+            self.data_splits['x_train'].shape[2]))
         # Normalized Ajacency Matrix
         if gcn_shape:
             input_rel = keras.Input(shape=self.Normalized_Adjacency_Matrix.shape[0])
@@ -473,7 +478,7 @@ class TF_Models(Graph_Entities):
         # Specify which loss function to use
         if loss_function == 'rank_loss':
             loss_function = rank_loss_func(rr_train=self.data_splits['rr_train'], rr_val=self.data_splits['rr_val'],
-                                           alpha=1)
+                                           alpha=alpha, beta=beta)
         elif loss_function == 'custom_mse':
             loss_function = None
 
@@ -496,7 +501,8 @@ class TF_Models(Graph_Entities):
     def train_model(self, epochs, learning_rate=1e-5):
 
         # New Tensorboard Code
-        log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + f'--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
+        log_dir = "logs/fit/" + datetime.datetime.now().strftime(
+            "%Y%m%d-%H%M%S") + f'--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
         self.epochs_n += epochs
@@ -533,13 +539,14 @@ class TF_Models(Graph_Entities):
             inputs_train.append(self.Normalized_Adjacency_Matrix)
             inputs_val.append(self.Normalized_Adjacency_Matrix)
 
-        self.model.fit(inputs_train,
-                       self.data_splits['y_train'],
-                       batch_size=self.data_splits['x_train'].shape[0],
-                       epochs=epochs,
-                       validation_data=(inputs_val, self.data_splits['y_val']),
-                       callbacks=[RLROP, model_checkpoint_callback, early_stopping,
-                                  tensorboard_callback])
+        history = self.model.fit(inputs_train,
+                                 self.data_splits['y_train'],
+                                 batch_size=self.data_splits['x_train'].shape[0],
+                                 epochs=epochs,
+                                 validation_data=(inputs_val, self.data_splits['y_val']),
+                                 callbacks=[RLROP, model_checkpoint_callback, early_stopping,
+                                            tensorboard_callback])
+        self.epochs_n = len(history.history['loss'])
 
         # Reloads the checkpoint with the lowest validation loss
         self.model.load_weights(checkpoint_filepath)
@@ -549,8 +556,8 @@ class TF_Models(Graph_Entities):
         filename utilizes the parameters from training and time of training to create the model name'''
 
     def save_model(self, tag=''):
-        model_name = f'{self.date_t}--{tag}--{self.epochs_n}Epochs--{self.loss_t}-Loss--{self.hidden_units}-HU--{self.tag_t}'
-        self.model.save(self.models_path + f'/{model_name}')
+        self.model_name = f'{self.date_t}-{tag}-{self.epochs_n}Epochs-{self.loss_t}-Loss-{self.hidden_units}-HU-{self.tag_t}'
+        self.model.save(self.models_path + f'/{self.model_name}')
 
     '''After parsing the .csv and .json data and then converting into data accessible by Tensorflow, it can be pickled
         and reloaded next time a model needs to be trained. On Google Colab specifically, this can save ~10 minutes 
