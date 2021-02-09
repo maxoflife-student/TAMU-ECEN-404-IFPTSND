@@ -356,6 +356,7 @@ class TF_Models(Graph_Entities):
         tf.random.set_seed(1337)
         tf.random.set_seed(420)
         tf.random.set_seed(17)
+        tf.random.set_seed(100998)
 
         optimizer = tf.keras.optimizers.Adam(
             learning_rate=0.0006, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=True,
@@ -528,7 +529,7 @@ class TF_Models(Graph_Entities):
 
             # If the last item was not the minimum, but the min and max value are VERY close to each other
             # Then the bottom has probably been found
-            if (abs(e_max - e_min) / e_max) <= 0.1:
+            if (abs(e_max - e_min) / e_max) <= 0.08:
 
                 # Changed my mind on Last Hoorah, removing
                 last_hoorah = False
@@ -548,7 +549,7 @@ class TF_Models(Graph_Entities):
             # In the case were learning_rate might be too fast,
             # Continue the loop, decrease the learning rate
             if last_epochs[-1] != np.min(last_epochs):
-                new_lr = last_lr * 0.333333
+                new_lr = last_lr * 0.3333
 
                 # Unless we're on the last hoorah, in which case the large increase from earlier needs to be removed
                 new_lr = last_lr / 10
@@ -622,7 +623,12 @@ class TF_Models(Graph_Entities):
             # Reloads the checkpoint with the lowest validation loss
             self.model.load_weights(checkpoint_filepath)
 
+            # Determines logic behind increasing or decreasing learning rate
             self.last_hoorah, self.schedule_function, loop = model_continue_check(self.history, self.last_hoorah)
+
+            # Just in case something has gone wrong the schedule function algorithm, there needs to be an escape case
+            if self.epochs_n > 350:
+                loop = False
 
         self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
 

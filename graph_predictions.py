@@ -757,8 +757,9 @@ class Graph_Predictions():
             top_choice = np.argmax(pred)
             entity_choices_list.append(int(top_choice))
 
-            choice_return_ratio = (self.x_test[top_choice, day + 1, 0] - self.x_test[top_choice, day, 0]) / self.x_test[
-                top_choice, day + 1, 0]
+            # Index the return_ratio for the top company we selected given this day
+            choice_return_ratio = (self.rr_test[top_choice, day])
+
             rr_list.append(float(choice_return_ratio))
 
             # Get the MSE
