@@ -719,7 +719,7 @@ class Graph_Predictions():
         pm_name = pm_name[0]
 
         # Load in the prediction results as a dictionary
-        file = open(f'./prediction_results/{pm_name}.json', 'r')
+        file = open(f'{pm_name}.json', 'r')
         pm = json.load(file)
 
         # Create a list of lists with shape (N, t)
@@ -741,34 +741,30 @@ class Graph_Predictions():
         mrr_list = []
 
         # print("Day: ", end='')
-        for day in range(0, self.num_time_steps - 2):
-            # print(f"{day}", end='|')
-            # Make a prediction for the price on day 0
-            # Which means only the testing set has been seen
+        for day in range(1, self.num_time_steps - 2):
+            # On day 1, the prediction model has SEEN the validation set and the first day of the test set
             pred = pred_list[day]
 
-            if day == 0:
-                yesterday_price = self.x_val[:, -1, 0]
-            else:
-                yesterday_price = self.x_test[:, day - 1, 0]
+            seen_price = self.x_test[:, day - 1, 0]
 
-            # Convert those predictions into highest return_ratio
-            pred = tf.divide(tf.subtract(pred, yesterday_price), pred)
+            # The predictinos given what we predict and what is ground truth prices
+            pred = tf.divide(tf.subtract(pred, seen_price), pred)
             top_choice = np.argmax(pred)
             entity_choices_list.append(int(top_choice))
 
             # Index the return_ratio for the top company we selected given this day
-            choice_return_ratio = (self.rr_test[top_choice, day])
-
+            # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
+            # we would be calculating the earning for holding for 1 day
+            choice_return_ratio = (self.rr_test[top_choice, day-1])
             rr_list.append(float(choice_return_ratio))
 
             # Get the MSE
-            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day])))
+            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day-1])))
 
             # Calculate the MRR
             # Create lists for the predicted return ratios and actual return ratios
             predictions = pred.numpy()
-            return_ratios = self.rr_test[:, day].numpy()
+            return_ratios = self.rr_test[:, day-1].numpy()
 
             # This algorithm is very fast for accurate models, possibly slow for inaccurate models
             # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
@@ -847,9 +843,28 @@ class Graph_Predictions():
         pm_name = pm_name.split('.json')
         pm_name = pm_name[0]
 
+        # Since the pm_name has a directory attached, this will isolate the name
+        pm_name = pm_name.split('/')[-1]
+
         with open(f'./{datablock_folder}/{pm_name}_DATABLOCK.json', 'w') as file:
             json.dump(json_file_save, file, indent=1)
 
         self.strategy_results['RR_' + pm_name] = rr_list
         # Save the current strategy results
         self.save_results()
+
+    def mass_generate_model_diagnostics(self, directory, new_directory, starting_item=None):
+        # Create a list of all files in the given directory
+        files = [f for f in os.listdir(directory) if f.endswith('.json')]
+
+        # If there's a certain start point in the list you would like to use, slice the list
+        if starting_item is not None:
+            files = files[files.index(starting_item):]
+
+        # For the remaining files, run the model diagnostics and save them in a new folder
+        for file in files:
+            print(file)
+            self.generate_model_diagnostics(directory + file, datablock_folder=new_directory)
+
+
+
