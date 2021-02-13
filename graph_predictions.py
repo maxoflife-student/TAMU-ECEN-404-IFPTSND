@@ -9,9 +9,10 @@ import tensorflow as tf
 import random
 
 from IPython.display import display
-from bqplot import (
-    LinearScale, Lines, Axis, Figure, Toolbar
-)
+# from bqplot import (
+#     LinearScale, Lines, Axis, Figure, Toolbar
+# )
+from bqplot import *
 
 import ipywidgets as widgets
 
@@ -22,6 +23,8 @@ import os
 from sklearn.metrics import mean_squared_error
 
 import numpy as np
+import time
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -49,6 +52,7 @@ class Graph_Predictions():
         self.entities = tensorflow_model_obj.entities
         self.x_test = tensorflow_model_obj.data_splits['x_test']
         self.x_val = tensorflow_model_obj.data_splits['x_val']
+        self.x_train = tensorflow_model_obj.data_splits['x_train']
         self.rr_test = tensorflow_model_obj.data_splits['rr_test']
         self.Normalized_Adjacency_Matrix = tensorflow_model_obj.Normalized_Adjacency_Matrix
 
@@ -394,8 +398,16 @@ class Graph_Predictions():
 
     '''Generates a json file containing every entity and its ratio prediction for all time-steps t in testing period'''
 
-    def generate_prediction_json(self, model_name, name_override='', top_n=25, bottom_n=25, expVis=True,
-                                 neural_net_type='lstm'):
+    def generate_prediction_json(self, model_name, new_directory, name_override='', expVis=True,
+                                 neural_net_type='lstm', testing_days=None, sliding_window=None):
+
+        # If we give a certain number of testing days, it will be overridden
+        if testing_days is None:
+            testing_days = self.num_time_steps - 1
+
+        sliding_bool = False
+        if sliding_window is not None:
+            sliding_bool = True
 
         print(f"\nLoading Model: '{model_name}'")
 
@@ -425,7 +437,7 @@ class Graph_Predictions():
 
         print(f"Total number of days: {self.x_test.shape[1]}")
 
-        for day in range(0, self.num_time_steps - 1):
+        for day in range(0, testing_days):
 
             # On the first day, the model should only see the validation set
             # after that day, then the test set needs to be incrementally added in
@@ -437,8 +449,16 @@ class Graph_Predictions():
                 # ~Triples prediction time
                 if expVis:
                     seeable = tf.concat([self.x_val, seeable], axis=1)
+                    seeable = tf.concat([self.x_train, seeable], axis=1)
             else:
-                seeable = self.x_val
+                seeable = tf.concat([self.x_train, self.x_val], axis=1)
+
+            # If a sliding window parameter was given, then the time axis sees needs to be truncated
+            if sliding_bool:
+                # The window will expand until we hit the expansion-point
+                if sliding_window < seeable.shape[1]:
+                    total = seeable.shape[1]
+                    seeable = seeable[:, total - sliding_window:, :]
 
             # Make a prediction, the input changes depending on the model type
             if neural_net_type == 'lstm':
@@ -482,7 +502,7 @@ class Graph_Predictions():
 
         self.model_name = f'{model_name}_PM.json'
 
-        with open(f'./prediction_results/{self.model_name}', 'w') as file:
+        with open(f'{new_directory}/{self.model_name}', 'w') as file:
             json.dump(results, file, indent=1)
 
     # This variation of the strategy execution assumes that the highest values in the prediction list are the best
@@ -755,16 +775,16 @@ class Graph_Predictions():
             # Index the return_ratio for the top company we selected given this day
             # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
             # we would be calculating the earning for holding for 1 day
-            choice_return_ratio = (self.rr_test[top_choice, day-1])
+            choice_return_ratio = (self.rr_test[top_choice, day - 1])
             rr_list.append(float(choice_return_ratio))
 
             # Get the MSE
-            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day-1])))
+            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day - 1])))
 
             # Calculate the MRR
             # Create lists for the predicted return ratios and actual return ratios
             predictions = pred.numpy()
-            return_ratios = self.rr_test[:, day-1].numpy()
+            return_ratios = self.rr_test[:, day - 1].numpy()
 
             # This algorithm is very fast for accurate models, possibly slow for inaccurate models
             # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
@@ -830,7 +850,8 @@ class Graph_Predictions():
         json_file_save = {
             "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Diversity_Percentage": diversity_perc,
             "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
-            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list, "Best_Potential_Score": best_potential_score
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list,
+            "Best_Potential_Score": best_potential_score
         }
 
         # Add a folder to store the results
@@ -866,5 +887,268 @@ class Graph_Predictions():
             print(file)
             self.generate_model_diagnostics(directory + file, datablock_folder=new_directory)
 
+    # Create a selection box for the files available in the directory
+    def compare_data_blocks(self, directory):
+
+        def data_blocks(search_string):
+
+            def key_values(files):
+
+                def display_figure(keys):
+
+                    def list_graph(d_obj, key):
+
+                        # Create some colors for the graphed lines to cycle through
+                        colors_list = ['0000FF', 'f38c00', 'FDD20E', '72e400', '00e4c1', '0076f3', '9700f3', 'f300c3',
+                                       '990000',
+                                       'd08800', '05aa00', '00a0aa', '7600aa', '830000', 'f38c00', '995900', '7e6701',
+                                       '264d00',
+                                       '004d41', '003166', '800066']
+                        colors_list = [f'#{i}' for i in colors_list]
+                        tmp = list(colors_list)
+                        for i in range(3):
+                            for color in tmp:
+                                colors_list.append(color)
+
+                        # Create distinctions between the colors
+                        line_styles = []
+                        # Account for the added one black at the end
+                        n = len(colors_list) - 1
+                        n4 = int(n / 4)
+                        for i in range(n):
+                            if i <= n4:
+                                line_styles.append('solid')
+                            elif n4 < i <= 2 * n4:
+                                line_styles.append('dashed')
+                            elif 2 * n4 < i <= 3 * n4:
+                                line_styles.append('dotted')
+                            else:
+                                line_styles.append('dash_dotted')
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#f30000')
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#008000')
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#000000')
+
+                        # Find the maximum length of the x_axis
+                        max_l = 0
+                        for o in d_obj:
+                            value = len(o[1])
+                            if value > max_l:
+                                max_l = value
+
+                        x_data = list(range(max_l))
+                        y_data = [o[1] for o in d_obj]
+
+                        x_scale = LinearScale()
+                        y_scale = LinearScale()
+
+                        ax_x = Axis(scale=x_scale, label='Trading Days', grid_lines='solid')
+                        ax_y = Axis(scale=y_scale, label=f'{key.split("_List")[0]}', orientation='vertical',
+                                    label_offset='50px', )
+
+                        line = [Lines(labels=[d_obj[i][0]], x=x_data, y=y_data[i], scales={'x': x_scale, 'y': y_scale},
+                                      colors=[colors_list[i]], display_legend=False, line_styles=line_styles[i]) for i in
+                                range(0, len(d_obj))]
+
+                        # Function to run when we hover over a scatter point
+                        def display_y_values(chart, d):
+                            # Get the x coordinate of the point we're hovering over
+                            x_point = d['data']['index']
+
+                            # y_data, color, and labels need to be sorted high to low
+                            # Create a tuple of the values and then sort them by y
+                            temp_list = [(y_data[i][x_point], colors_list[i], d_obj[i][0]) for i in range(len(d_obj))]
+                            # Sort the list by the first index of each object
+                            temp_list.sort(key=lambda x: x[0], reverse=True)
+
+                            # HTML widget to display when we hover on a scatter point
+                            output_text = []
+                            for i in range(len(d_obj)):
+                                # out = widgets.Output(layout={'border': '1px solid black', 'color': colors_list[i]})
+                                out = widgets.HTML(
+                                    value=f'<b>{"{:.3E}".format(temp_list[i][0])}</b>\t\t|\t<span style="color: '
+                                          f'{temp_list[i][1]}">{temp_list[i][2]}</span>')
+                                output_text.append(out)
+                            # Place the HTML text into a vertically stretching box
+                            out_box = widgets.VBox(output_text)
+                            # Display the VBox on hover
+                            chart.tooltip = out_box
+
+                        # Scatter points for easier mouse position
+                        scat = [Scatter(x=x_data, y=y_data[i], scales={'x': x_scale, 'y': y_scale},
+                                        colors=[colors_list[i]], default_size=7) for i in range(0, len(d_obj))]
+                        for s in scat:
+                            s.on_hover(display_y_values)
+
+                        # # Line settings for the first entity
+                        # line.insert(0, Lines(labels=[strat_sel[0]], x=x_data, y=y_data[0],
+                        #                      scales={'x': x_scale, 'y': y_scale},
+                        #                      colors=[colors_list[0]], display_legend=True, stroke_width=2))
+
+                        # Combine the lines and scatter objects into one list for the figure
+                        graphable = line + scat
+                        fig = Figure(marks=graphable, axes=[ax_x, ax_y],
+                                     title=f'{key.split("_List")[0]} vs. Time',
+                                     colors=['red'], legend_location='top-left', legend_text={'font-size': 18})
+                        fig.layout.height = '700px'
+                        toolbar = Toolbar(figure=fig)
+
+                        # HTML widget to display the labels
+                        output_text = []
+                        for i in range(len(d_obj)):
+                            # out = widgets.Output(layout={'border': '1px solid black', 'color': colors_list[i]})
+                            out = widgets.HTML(
+                                value=f'<span style="color: '
+                                      f'{colors_list[i]}">{d_obj[i][0]}</span>',
+                                layout=widgets.Layout(height='15px'))
+                            output_text.append(out)
+                        # Place the HTML text into a vertically stretching box
+                        out_box = widgets.VBox(output_text)
+                        # Display the VBox on hover
+                        display(out_box)
 
 
+                        display(fig, toolbar)
+
+                    def float_graph(d_obj, key):
+                        colors_list = ['0000FF', 'f38c00', 'FDD20E', '72e400', '00e4c1', '0076f3', '9700f3', 'f300c3',
+                                       '990000',
+                                       'd08800', '05aa00', '00a0aa', '7600aa', '830000', 'f38c00', '995900', '7e6701',
+                                       '264d00',
+                                       '004d41', '003166', '800066']
+                        colors_list = [f'#{i}' for i in colors_list]
+                        tmp = list(colors_list)
+                        for i in range(3):
+                            for color in tmp:
+                                colors_list.append(color)
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#f30000')
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#008000')
+
+                        # Insert the black color used on the selected entity
+                        colors_list.insert(0, '#000000')
+
+                        # Seperate the names the values
+                        names = [d_obj[i][0] for i in range(len(d_obj))]
+                        values = [d_obj[i][1] for i in range(len(d_obj))]
+
+                        # HTML widget to display the labels
+                        output_text = []
+                        for i in range(len(d_obj)):
+                            # out = widgets.Output(layout={'border': '1px solid black', 'color': colors_list[i]})
+                            out = widgets.HTML(
+                                value=f'<b>{"{:.3E}".format(values[i])}</b>\t\t|\t<span style="color: '
+                                      f'{colors_list[i]}">{names[i]}</span>',
+                                layout=widgets.Layout(height='15px'))
+                            output_text.append(out)
+                        # Place the HTML text into a vertically stretching box
+                        out_box = widgets.VBox(output_text)
+                        # Display the VBox on hover
+                        display(out_box)
+
+                        names = [' '*i for i in range(len(names))]
+
+                        df = pd.DataFrame(
+                            index=['NaN'],
+                            columns=names,
+                            data=[values]
+                        )
+
+                        x_scale = OrdinalScale()
+                        y_scale = LinearScale()
+                        bar = Bars(x=df.columns, y=df.iloc[0], scales={'x': x_scale, 'y': y_scale},
+                                   labels=df.index[1:].tolist(), colors=colors_list, display_legend=True)
+
+                        ord_ax = Axis(label="Models", scale=x_scale, grid_lines='none')
+                        y_ax = Axis(label=f'{key}', scale=y_scale, orientation='vertical',
+                                    grid_lines='solid')
+
+                        fig = Figure(axes=[ord_ax, y_ax], marks=[bar])
+
+                        display(fig)
+
+                    def on_button_click(b):
+                        # For every file we have selected, we need to graph every key that we've selected
+                        # Some keys are floats, others are lists, they require different graphs for comparison
+                        for key in keys:
+                            graph_items = []
+                            # Grab all the pieces of data pertaining to the key of this loop
+                            for db in files:
+                                obj = json.load(open(f'{directory}/{db}', 'r'))
+                                graph_items.append((db, obj[key]))
+
+                            # Select which graph type is needed
+                            data_type = type(graph_items[0][1])
+                            if data_type is float:
+                                float_graph(graph_items, key)
+                            elif data_type is list:
+                                list_graph(graph_items, key)
+                            else:
+                                print(f"Unaccounted for type: {data_type}")
+
+                    # Don't load the graphs until we click the button to avoid weird loading times
+                    button = widgets.Button(description='Load Graphs')
+                    button.on_click(on_button_click)
+                    display(button)
+
+                #############################################################
+                # Load all the selected files into memory
+                loaded_files = []
+                for f in files:
+                    obj = open(f'{directory}/{f}', 'r')
+                    loaded_files.append(json.load(obj))
+
+                # Create a set of the possible values that can be compared
+                numeric_data = set()
+                for d in loaded_files:
+                    numeric_data = numeric_data.union(set(d.keys()))
+
+                # Convert to a list and sort (prettier)
+                numeric_data = list(numeric_data)
+                numeric_data.sort()
+
+                # Select one to be graphed
+                keys = widgets.SelectMultiple(
+                    options=numeric_data,
+                    rows=8,
+                    description='Keys',
+                    disabled=False,
+                    layout=widgets.Layout(width='50%')
+                )
+
+                widgets.interact(display_figure, keys=keys)
+
+            #############################################################
+            # List all files that are in the directory
+            files = [f for f in os.listdir(directory) if f.endswith('.json')]
+            # Reduce the list to the search tag, (not case sensitive)
+            files = [f for f in files if search_string.lower() in f.lower()]
+
+            data_block_sel = widgets.SelectMultiple(
+                options=files,
+                rows=15,
+                description='Data Blocks',
+                disabled=False,
+                layout=widgets.Layout(width='80%')
+            )
+
+            # Run the selected files through the key_value box
+            widgets.interact(key_values, files=data_block_sel)
+
+        #############################################################
+        search_string = widgets.Text(
+            value='',
+            placeholder='Tag',
+            description='Search',
+            disabled=False
+        )
+        # Run the input string though the file selection box
+        widgets.interact(data_blocks, search_string=search_string)

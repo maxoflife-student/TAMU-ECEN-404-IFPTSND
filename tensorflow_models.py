@@ -506,7 +506,7 @@ class TF_Models(Graph_Entities):
         learning rate scheduler, this training can be run multple times on the same model with different learning rates.
         Additionally, the best model will be selected based on the validation set to avoid worry of over-training'''
 
-    def train_model_loop(self, epoch_batches, learning_rate=1e-4):
+    def train_model_loop(self, epoch_batches, learning_rate=5e-5, one_loop_only=False):
 
         def model_continue_check(history, last_hoorah):
             print("#" * 125)
@@ -519,7 +519,7 @@ class TF_Models(Graph_Entities):
             # In the case were learning_rate might be too slow,
             # Continue the loop, increase the learning rate
             if last_epochs[-1] == e_min:
-                new_lr = last_lr * 1.6
+                new_lr = last_lr * 1.5
                 print(f'Increasing learning rate to: {"{:.3e}".format(new_lr)}')
 
                 def scheduler(epoch, lr):
@@ -627,7 +627,7 @@ class TF_Models(Graph_Entities):
             self.last_hoorah, self.schedule_function, loop = model_continue_check(self.history, self.last_hoorah)
 
             # Just in case something has gone wrong the schedule function algorithm, there needs to be an escape case
-            if self.epochs_n > 350:
+            if self.epochs_n > 350 or one_loop_only:
                 loop = False
 
         self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
