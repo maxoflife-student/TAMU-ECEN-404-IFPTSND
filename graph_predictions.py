@@ -45,7 +45,7 @@ def max_index(l, rank=0, mini=False):
 
 
 class Graph_Predictions():
-    def __init__(self, model_path, results_path, tensorflow_model_obj):
+    def __init__(self, model_path, results_path, main_set_type, tensorflow_model_obj):
         # Data that should be given to operate
         self.model_path = model_path
         self.results_path = results_path
@@ -62,8 +62,18 @@ class Graph_Predictions():
         # Data used in our specific strategy implementation method
         self.increment = 5e4
         self.starting_investment = 2 * self.increment
-        self.num_entities = self.x_test.shape[0]
-        self.num_time_steps = self.x_test.shape[1]
+
+        self.working_set = None
+        if main_set_type == 'x_val':
+            self.working_set = self.x_val
+            self.working_rr = tensorflow_model_obj.data_splits['rr_val']
+        elif main_set_type == 'x_test':
+            self.working_set = self.x_test
+            self.working_rr = tensorflow_model_obj.data_splits['rr_test']
+        else:
+            os.error('The main_set_type must be specified')
+        self.num_entities = self.working_set.shape[0]
+        self.num_time_steps = self.working_set.shape[1]
 
         # To calculate MSE, YY_tf is needed from the tensorflow model
         self.YY_tf = tensorflow_model_obj.YY_tf
@@ -76,6 +86,8 @@ class Graph_Predictions():
 
         # Load the files already in ./strategies
         self.update_strats()
+
+        self.test_obj = None
 
     '''Loads all saved strategy results from the directory into memory as a dictionary'''
 
@@ -211,8 +223,8 @@ class Graph_Predictions():
         the next day'''
 
     def buy_then_sell(self, company, day, amount):
-        today_price = self.x_test[company, day, 0]
-        tomorrow_price = self.x_test[company, day + 1, 0]
+        today_price = self.working_set[company, day, 0]
+        tomorrow_price = self.working_set[company, day + 1, 0]
         return amount * (tomorrow_price / today_price)
 
     '''This strategy purchases a third of the entities each day at random and splits the total among them. This
@@ -398,7 +410,7 @@ class Graph_Predictions():
 
     '''Generates a json file containing every entity and its ratio prediction for all time-steps t in testing period'''
 
-    def generate_prediction_json(self, model_name, new_directory, name_override='', expVis=True,
+    def generate_test_prediction_json(self, model_name, new_directory, tag='', expVis=True,
                                  neural_net_type='lstm', testing_days=None, sliding_window=None):
 
         # If we give a certain number of testing days, it will be overridden
@@ -422,20 +434,15 @@ class Graph_Predictions():
             input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
             sys.exit()
 
-        if name_override:
-            model_name = name_override
-
-        '''Deprecated, see below'''
-        # top_entities = []
-        # bottom_entities = []
-        # mse = []
+        if tag:
+            model_name = model_name + tag
 
         # Create a dictionary with entity keys where all entities are an empty list
         results = {}
         for c in self.entities:
             results[c] = []
 
-        print(f"Total number of days: {self.x_test.shape[1]}")
+        print(f"Total number of days: {self.working_set.shape[1]}")
 
         for day in range(0, testing_days):
 
@@ -443,7 +450,7 @@ class Graph_Predictions():
             # after that day, then the test set needs to be incrementally added in
             if day > 0:
                 # The model should only be able to see up to yesterday
-                seeable = self.x_test[:, 0:day, :]
+                seeable = self.working_set[:, 0:day, :]
 
                 # Allow the model to see the validation set when predicting
                 # ~Triples prediction time
@@ -470,23 +477,6 @@ class Graph_Predictions():
             for i, c in enumerate(self.entities):
                 results[c].append(float(pred[i]))
 
-            '''Was used to calculate the bottom & top companies, but is deprecated now
-                that I'm just saving all prediction results'''
-            # # Find the top n and bottom n entities
-            # top_entities_c = [max_index(pred, i) for i in range(top_n)]
-            # bottom_entities_c = [max_index(pred, i, mini=True) for i in range(bottom_n)]
-            # # Convert their position to entity name for read-ability
-            # top_entities_t = [self.entities[c] for c in top_entities_c]
-            # bottom_entities_t = [self.entities[c] for c in bottom_entities_c]
-            #
-            # # Calculate the average MSE for company predictions
-            # mse_t = np.mean(tf.keras.losses.mse(pred, self.YY_tf[:, day]))
-            #
-            # # Append the calculated values
-            # top_entities.append(top_entities_t)
-            # bottom_entities.append(bottom_entities_t)
-            # mse.append(mse_t)
-
             print(f"Day {day} |", end=' ')
 
         '''Deprecated with previous calculations'''
@@ -498,12 +488,92 @@ class Graph_Predictions():
 
         # This will be useful for making retrieving the predictions later
         # If x_test is always assumed to be at the tail of each dataset, then
-        results['x_test_shape'] = list(self.x_test.shape)
+        results['x_test_shape'] = list(self.working_set.shape)
 
         self.model_name = f'{model_name}_PM.json'
 
         with open(f'{new_directory}/{self.model_name}', 'w') as file:
             json.dump(results, file, indent=1)
+
+    def generate_validation_prediction_json(self, model_name, new_directory, tag='', expVis=True,
+                                 neural_net_type='lstm', testing_days=None, sliding_window=None):
+
+        # If we give a certain number of testing days, it will be overridden
+        if testing_days is None:
+            testing_days = self.num_time_steps - 1
+
+        sliding_bool = False
+        if sliding_window is not None:
+            sliding_bool = True
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which parameter is being used to determine custom objects
+        if neural_net_type == 'lstm':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif neural_net_type == 'gcn':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+        if tag:
+            model_name = model_name + tag
+
+        # Create a dictionary with entity keys where all entities are an empty list
+        results = {}
+        for c in self.entities:
+            results[c] = []
+
+        print(f"Total number of days: {self.working_set.shape[1]}")
+
+        for day in range(0, testing_days):
+
+            # On the first day, the model should only see the validation set
+            # after that day, then the test set needs to be incrementally added in
+            if day > 0:
+                # The model should only be able to see up to yesterday
+                seeable = self.working_set[:, 0:day, :]
+                seeable = tf.concat([self.x_train, seeable], axis=1)
+
+            else:
+                seeable = self.x_train
+
+            # If a sliding window parameter was given, then the time axis sees needs to be truncated
+            if sliding_bool:
+                # The window will expand until we hit the expansion-point
+                if sliding_window < seeable.shape[1]:
+                    total = seeable.shape[1]
+                    seeable = seeable[:, total - sliding_window:, :]
+
+            # Make a prediction, the input changes depending on the model type
+            if neural_net_type == 'lstm':
+                pred = model.predict(tf.constant(seeable))
+            elif neural_net_type == 'gcn':
+                pred = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+
+            # The model creates predictions equal to the size of the training set,
+            # but the immediate next-day prediction is all we care about.
+            pred = pred[:, 0, 0]
+
+            # For all N, add its predictions to its containing list in the results dictionary
+            for i, c in enumerate(self.entities):
+                results[c].append(float(pred[i]))
+
+            print(f"Day {day} |", end=' ')
+
+
+        # This will be useful for making retrieving the predictions later
+        # If x_test is always assumed to be at the tail of each dataset, then
+        results['x_val_shape'] = list(self.x_val.shape)
+
+        self.model_name = f'{model_name}_PM.json'
+
+        with open(f'{new_directory}/{self.model_name}', 'w') as file:
+            json.dump(results, file, indent=1)
+
 
     # This variation of the strategy execution assumes that the highest values in the prediction list are the best
     # stock.
@@ -584,7 +654,15 @@ class Graph_Predictions():
 
     # This variation of the strategy execution assumes that each value is simply a prediction of the next days price,
     # so the highest ranked choices for the day need to be calculated from the closing price
-    def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1):
+    def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1, set='x_val'):
+
+        working_set = []
+        if set == 'x_test':
+            working_set = self.x_test
+        elif set == 'x_val':
+            working_set = self.x_val
+        else:
+            os.error("You must specify which dataset split is being worked on")
 
         print(f"\nLoading PM Model: '{pm_name}'")
 
@@ -748,6 +826,11 @@ class Graph_Predictions():
         pred = np.array(pred)
         pred_list = np.transpose(pred)
 
+        # This is for testing outside of the model
+        self.test_obj = pred_list
+        # print("we're out baby")
+        # return
+
         if name_override:
             pm_name = name_override
 
@@ -765,7 +848,7 @@ class Graph_Predictions():
             # On day 1, the prediction model has SEEN the validation set and the first day of the test set
             pred = pred_list[day]
 
-            seen_price = self.x_test[:, day - 1, 0]
+            seen_price = self.working_set[:, day - 1, 0]
 
             # The predictinos given what we predict and what is ground truth prices
             pred = tf.divide(tf.subtract(pred, seen_price), pred)
@@ -775,16 +858,16 @@ class Graph_Predictions():
             # Index the return_ratio for the top company we selected given this day
             # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
             # we would be calculating the earning for holding for 1 day
-            choice_return_ratio = (self.rr_test[top_choice, day - 1])
+            choice_return_ratio = (self.working_rr[top_choice, day - 1])
             rr_list.append(float(choice_return_ratio))
 
             # Get the MSE
-            mse_list.append(float(mean_squared_error(pred, self.rr_test[:, day - 1])))
+            mse_list.append(float(mean_squared_error(pred, self.working_rr[:, day - 1])))
 
             # Calculate the MRR
             # Create lists for the predicted return ratios and actual return ratios
             predictions = pred.numpy()
-            return_ratios = self.rr_test[:, day - 1].numpy()
+            return_ratios = self.working_rr[:, day - 1].numpy()
 
             # This algorithm is very fast for accurate models, possibly slow for inaccurate models
             # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
@@ -826,7 +909,7 @@ class Graph_Predictions():
         cumulative_rr = float(np.prod(rr_list_plus_1))
 
         # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
-        diversity_perc = float(len(set(entity_choices_list)) / self.x_test.shape[1])
+        diversity_perc = float(len(set(entity_choices_list)) / self.working_set.shape[1])
 
         # What is the average error in calculating the next day return ratio?
         avg_mse = float(np.mean(mse_list))
@@ -1040,6 +1123,13 @@ class Graph_Predictions():
                         names = [d_obj[i][0] for i in range(len(d_obj))]
                         values = [d_obj[i][1] for i in range(len(d_obj))]
 
+                        # Sort all values from high to low
+                        temp_list = [(names[i], values[i], colors_list[i]) for i in range(len(d_obj))]
+                        temp_list.sort(key=lambda x: x[1], reverse=True)
+                        names = [temp_list[i][0] for i in range(len(d_obj))]
+                        values = [temp_list[i][1] for i in range(len(d_obj))]
+                        colors_list = [temp_list[i][2] for i in range(len(d_obj))]
+
                         # HTML widget to display the labels
                         output_text = []
                         for i in range(len(d_obj)):
@@ -1054,6 +1144,7 @@ class Graph_Predictions():
                         # Display the VBox on hover
                         display(out_box)
 
+                        old_names = list(names)
                         names = [' '*i for i in range(len(names))]
 
                         df = pd.DataFrame(
@@ -1065,13 +1156,25 @@ class Graph_Predictions():
                         x_scale = OrdinalScale()
                         y_scale = LinearScale()
                         bar = Bars(x=df.columns, y=df.iloc[0], scales={'x': x_scale, 'y': y_scale},
-                                   labels=df.index[1:].tolist(), colors=colors_list, display_legend=True)
+                                   labels=df.index[1:].tolist(), colors=colors_list, display_legend=True )
 
                         ord_ax = Axis(label="Models", scale=x_scale, grid_lines='none')
                         y_ax = Axis(label=f'{key}', scale=y_scale, orientation='vertical',
                                     grid_lines='solid')
 
-                        fig = Figure(axes=[ord_ax, y_ax], marks=[bar])
+                        fig = Figure(axes=[ord_ax, y_ax], marks=[bar], title=f'{key} Comparison between Models',
+                                     legend_text={'font-size': 18})
+
+                        def display_name(chart, d):
+                            color_spaces = d['data']['x']
+                            idx = names.index(color_spaces)
+
+                            out = widgets.HTML(
+                                value=f'<b>{"{:.3E}".format(values[idx])}</b>\t\t|\t<span style="color: '
+                                      f'{colors_list[idx]}">{old_names[idx]}</span>')
+
+                            chart.tooltip = out
+                        bar.on_hover(display_name)
 
                         display(fig)
 

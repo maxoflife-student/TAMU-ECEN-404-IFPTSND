@@ -61,7 +61,10 @@ def rank_loss_func(rr_train, rr_val, alpha=1e-6, beta=1, forecast=1):
         # squared_difference = math_ops.squared_difference(ground_truth, return_ratio)
         # sd_mean = math_ops.reduce_mean(squared_difference)
         # mse = mean_squared_error(ground_truth.numpy(), return_ratio.numpy())
-        mse = tf.keras.losses.mean_squared_error(ground_truth, return_ratio)
+
+        # Shouldn't these be the same thing essentially?
+        # mse = tf.keras.losses.mean_squared_error(ground_truth, return_ratio)
+        mse = tf.keras.losses.mean_squared_error(y_actual, y_pred)
 
         # Create an array of all_ones so that we can calculate all permutations of subtractions
         all_ones = tf.ones([y_actual.shape[0], 1], dtype=tf.float32)
@@ -246,7 +249,7 @@ class TF_Models(Graph_Entities):
         which dimension to make the split. In the default example, it's time'''
     '''returns a dictionary containing the splits'''
 
-    def split_data(self, axis=1, perc_split=[60, 15, 25]):
+    def split_data(self, axis=1, perc_split=[55, 25, 20]):
 
         # Given a total and list of splits, evenly distributes the total amount proportional to the given list
         def split_windows(total, percentages_list):
@@ -372,6 +375,13 @@ class TF_Models(Graph_Entities):
             self.data_splits['x_train'].shape[1] + self.data_splits['x_val'].shape[1] +
             self.data_splits['x_test'].shape[1],
             self.data_splits['x_train'].shape[2]))
+
+        # input_seq = keras.Input(shape=self.XX_tf.shape[1:])
+        # Originally XX_tf would always be the maximum size, but now we need it to work with split data that doesn't contain the whole
+        input_seq = keras.Input(shape=(
+            self.data_splits['x_train'].shape[1],
+            self.data_splits['x_train'].shape[2]))
+
         # Normalized Ajacency Matrix
         if gcn_shape:
             input_rel = keras.Input(shape=self.Normalized_Adjacency_Matrix.shape[0])
@@ -387,10 +397,14 @@ class TF_Models(Graph_Entities):
 
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
-            x = LSTM(hidden_units, return_sequences=True, activation=activation)(input_seq)
-            x = tf.keras.layers.Dropout(0.25)(x)
-            x = LSTM(hidden_units, return_sequences=False, activation=activation)(x)
-            x = tf.keras.layers.Dropout(0.25)(x)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=0.5,
+                     recurrent_dropout=0.5)(input_seq)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=0.5,
+                     recurrent_dropout=0.5)(x)
+            # x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=0.5,
+            #          recurrent_dropout=0.5)(x)
+            # x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=0.5,
+            #          recurrent_dropout=0.5)(x)
             x = Dense(1, activation=activation)(x)
             self.model = tf.keras.Model(inputs=[input_seq], outputs=x)
 
@@ -519,7 +533,7 @@ class TF_Models(Graph_Entities):
             # In the case were learning_rate might be too slow,
             # Continue the loop, increase the learning rate
             if last_epochs[-1] == e_min:
-                new_lr = last_lr * 1.5
+                new_lr = last_lr * 1.3
                 print(f'Increasing learning rate to: {"{:.3e}".format(new_lr)}')
 
                 def scheduler(epoch, lr):
@@ -529,7 +543,7 @@ class TF_Models(Graph_Entities):
 
             # If the last item was not the minimum, but the min and max value are VERY close to each other
             # Then the bottom has probably been found
-            if (abs(e_max - e_min) / e_max) <= 0.08:
+            if (abs(e_max - e_min) / e_max) <= 0.08 or last_epochs[0] == e_min:
 
                 # Changed my mind on Last Hoorah, removing
                 last_hoorah = False
@@ -609,7 +623,7 @@ class TF_Models(Graph_Entities):
         while loop:
             self.history = self.model.fit(inputs_train,
                                           self.data_splits['y_train'],
-                                          batch_size=self.data_splits['x_train'].shape[0],
+                                          batch_size=int(self.data_splits['x_train'].shape[0]),
                                           epochs=epoch_batches,
                                           validation_data=(inputs_val, self.data_splits['y_val']),
                                           callbacks=[model_checkpoint_callback,
