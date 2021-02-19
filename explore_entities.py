@@ -7,9 +7,9 @@ import numpy as np
 from IPython.display import display
 import ipywidgets as widgets
 from ipywidgets import Layout, GridBox
-from bqplot import (
-    LinearScale, Lines, Axis, Figure, Toolbar
-)
+# from bqplot import (
+#     LinearScale, Lines, Axis, Figure, Toolbar
+# )
 
 import json
 import random

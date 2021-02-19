@@ -3,15 +3,17 @@ import sys
 from os.path import isfile, join
 
 from tensorflow_models import leaky_relu, Ein_Multiply
+import pydot
+import graphviz
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import tensorflow as tf
 import random
 
 from IPython.display import display
-# from bqplot import (
-#     LinearScale, Lines, Axis, Figure, Toolbar
-# )
+from bqplot import (
+    LinearScale, Lines, Axis, Figure, Toolbar
+)
 from bqplot import *
 
 import ipywidgets as widgets
@@ -411,7 +413,7 @@ class Graph_Predictions():
     '''Generates a json file containing every entity and its ratio prediction for all time-steps t in testing period'''
 
     def generate_test_prediction_json(self, model_name, new_directory, tag='', expVis=True,
-                                 neural_net_type='lstm', testing_days=None, sliding_window=None):
+                                      neural_net_type='lstm', testing_days=None, sliding_window=None):
 
         # If we give a certain number of testing days, it will be overridden
         if testing_days is None:
@@ -496,7 +498,7 @@ class Graph_Predictions():
             json.dump(results, file, indent=1)
 
     def generate_validation_prediction_json(self, model_name, new_directory, tag='', expVis=True,
-                                 neural_net_type='lstm', testing_days=None, sliding_window=None):
+                                            neural_net_type='lstm', testing_days=None, sliding_window=None, model_obj=None):
 
         # If we give a certain number of testing days, it will be overridden
         if testing_days is None:
@@ -506,21 +508,26 @@ class Graph_Predictions():
         if sliding_window is not None:
             sliding_bool = True
 
-        print(f"\nLoading Model: '{model_name}'")
-
-        # Specify which parameter is being used to determine custom objects
-        if neural_net_type == 'lstm':
-            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
-                                               custom_objects={'leaky_relu': leaky_relu})
-        elif neural_net_type == 'gcn':
-            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
-                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        if model_obj is not None:
+            model = model_obj
+            print(f"\nLoading Given Model:")
         else:
-            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
-            sys.exit()
 
-        if tag:
-            model_name = model_name + tag
+            print(f"\nLoading Model: '{model_name}'")
+
+            # Specify which parameter is being used to determine custom objects
+            if neural_net_type == 'lstm':
+                model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                                   custom_objects={'leaky_relu': leaky_relu})
+            elif neural_net_type == 'gcn':
+                model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                                   custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+            else:
+                input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+                sys.exit()
+
+            if tag:
+                model_name = model_name + tag
 
         # Create a dictionary with entity keys where all entities are an empty list
         results = {}
@@ -556,14 +563,13 @@ class Graph_Predictions():
 
             # The model creates predictions equal to the size of the training set,
             # but the immediate next-day prediction is all we care about.
-            pred = pred[:, 0, 0]
+            pred = pred[:, 0]
 
             # For all N, add its predictions to its containing list in the results dictionary
             for i, c in enumerate(self.entities):
                 results[c].append(float(pred[i]))
 
-            print(f"Day {day} |", end=' ')
-
+            print(f"Day {day} | Max: {np.argmax(pred)}", end=' ')
 
         # This will be useful for making retrieving the predictions later
         # If x_test is always assumed to be at the tail of each dataset, then
@@ -574,6 +580,352 @@ class Graph_Predictions():
         with open(f'{new_directory}/{self.model_name}', 'w') as file:
             json.dump(results, file, indent=1)
 
+    def generate_validation_prediction_json_SplitBatch(self, model_name, new_directory, data_to_see, data_to_over,
+                                                       tag='', expVis=True,
+                                                       neural_net_type='lstm', testing_days=None, sliding_window=None):
+
+        # temp = self.entities
+        # self.entities = self.entities[0:2]
+
+        # If we give a certain number of testing days, it will be overridden
+        if testing_days is None:
+            testing_days = data_to_over.shape[1] - 1
+
+        sliding_bool = False
+        if sliding_window is not None:
+            sliding_bool = True
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which parameter is being used to determine custom objects
+        if neural_net_type == 'lstm':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif neural_net_type == 'gcn':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+        if tag:
+            model_name = model_name + tag
+
+        # Create a dictionary with entity keys where all entities are an empty list
+        results = {}
+        for c in self.entities:
+            results[c] = []
+
+        print(f"Total number of days: {data_to_over.shape[1]}")
+
+        for day in range(0, testing_days):
+
+            # On the first day, the model should only see the validation set
+            # after that day, then the test set needs to be incrementally added in
+            if day > 0:
+                # The model should only be able to see up to yesterday
+                seeable = data_to_over[:, 0:day, :]
+                seeable = tf.concat([data_to_see, seeable], axis=1)
+
+            else:
+                seeable = data_to_see
+
+            # If a sliding window parameter was given, then the time axis sees needs to be truncated
+            if sliding_bool:
+                # The window will expand until we hit the expansion-point
+                if sliding_window < seeable.shape[1]:
+                    total = seeable.shape[1]
+                    seeable = seeable[:, total - sliding_window:, :]
+
+            # Make a prediction, the input changes depending on the model type
+            if neural_net_type == 'lstm':
+                pred = model.predict(tf.constant(seeable))
+            elif neural_net_type == 'gcn':
+                pred = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+
+            # The model creates predictions equal to the size of the training set,
+            # but the immediate next-day prediction is all we care about.
+            pred = pred[:, 0]
+
+            # For all N, add its predictions to its containing list in the results dictionary
+            for i, c in enumerate(self.entities):
+                results[c].append(float(pred[i]))
+
+            print(f"Day {day} | ", end=' ')
+
+        # This will be useful for making retrieving the predictions later
+        # If x_test is always assumed to be at the tail of each dataset, then
+        results['seeable'] = list(seeable.shape)
+
+        with open(f'{new_directory}/{model_name}', 'w') as file:
+            json.dump(results, file, indent=1)
+
+        # self.entities = temp
+
+    def generate_validation_prediction_json_SplitBatch_nofeat(self, model_name, new_directory, data_to_see, data_to_over,
+                                                       tag='', expVis=True,
+                                                       neural_net_type='lstm', testing_days=None, sliding_window=None):
+
+        # temp = self.entities
+        # self.entities = self.entities[0:2]
+
+        # If we give a certain number of testing days, it will be overridden
+        if testing_days is None:
+            testing_days = data_to_over.shape[1] - 1
+
+        sliding_bool = False
+        if sliding_window is not None:
+            sliding_bool = True
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which parameter is being used to determine custom objects
+        if neural_net_type == 'lstm':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif neural_net_type == 'gcn':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+        if tag:
+            model_name = model_name + tag
+
+        # Create a dictionary with entity keys where all entities are an empty list
+        results = {}
+        for c in self.entities:
+            results[c] = []
+
+        print(f"Total number of days: {data_to_over.shape[1]}")
+
+        for day in range(0, testing_days):
+
+            # On the first day, the model should only see the validation set
+            # after that day, then the test set needs to be incrementally added in
+            if day > 0:
+                # The model should only be able to see up to yesterday
+                seeable = data_to_over[:, 0:day]
+                seeable = tf.concat([data_to_see, seeable], axis=1)
+
+            else:
+                seeable = data_to_see
+
+            # If a sliding window parameter was given, then the time axis sees needs to be truncated
+            if sliding_bool:
+                # The window will expand until we hit the expansion-point
+                if sliding_window < seeable.shape[1]:
+                    total = seeable.shape[1]
+                    seeable = seeable[:, total - sliding_window:]
+
+            # Make a prediction, the input changes depending on the model type
+            if neural_net_type == 'lstm':
+                pred = model.predict(tf.constant(seeable))
+            elif neural_net_type == 'gcn':
+                pred = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+
+            # The model creates predictions equal to the size of the training set,
+            # but the immediate next-day prediction is all we care about.
+            pred = pred[:, 0]
+
+            # For all N, add its predictions to its containing list in the results dictionary
+            for i, c in enumerate(self.entities):
+                results[c].append(float(pred[i]))
+
+            print(f"Day {day} | ", end=' ')
+
+        # This will be useful for making retrieving the predictions later
+        # If x_test is always assumed to be at the tail of each dataset, then
+        results['seeable'] = list(seeable.shape)
+
+        with open(f'{new_directory}/{model_name}', 'w') as file:
+            json.dump(results, file, indent=1)
+
+        # self.entities = temp
+
+    def generate_validation_prediction_json_SplitBatch_close_gap(self, model_name, new_directory, data_to_see, data_to_over,
+                                                       tag='', expVis=True,
+                                                       neural_net_type='lstm', testing_days=None, sliding_window=None):
+
+        # temp = self.entities
+        # self.entities = self.entities[0:2]
+
+        # If we give a certain number of testing days, it will be overridden
+        if testing_days is None:
+            testing_days = data_to_over.shape[1] - 1
+
+        sliding_bool = False
+        if sliding_window is not None:
+            sliding_bool = True
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which parameter is being used to determine custom objects
+        if neural_net_type == 'lstm':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif neural_net_type == 'gcn':
+            model = tf.keras.models.load_model(self.model_path + f'{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+        if tag:
+            model_name = model_name + tag
+
+        # Create a dictionary with entity keys where all entities are an empty list
+        results = {}
+        for c in self.entities:
+            results[c] = []
+
+        print(f"Total number of days: {data_to_over.shape[1]}")
+
+        daily_gap_adj = None
+        for day in range(0, testing_days):
+
+            # On the first day, the model should only see the validation set
+            # after that day, then the test set needs to be incrementally added in
+            if day > 0:
+                # The model should only be able to see up to yesterday
+                seeable = data_to_over[:, 0:day, :]
+                seeable = tf.concat([data_to_see, seeable], axis=1)
+
+            else:
+                seeable = data_to_see
+
+            # If a sliding window parameter was given, then the time axis sees needs to be truncated
+            if sliding_bool:
+                # The window will expand until we hit the expansion-point
+                if sliding_window < seeable.shape[1]:
+                    total = seeable.shape[1]
+                    seeable = seeable[:, total - sliding_window:, :]
+
+            # Make a prediction, the input changes depending on the model type
+            if neural_net_type == 'lstm':
+                pred = model.predict(tf.constant(seeable))
+            elif neural_net_type == 'gcn':
+                pred = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+
+            # The model creates predictions equal to the size of the training set,
+            # but the immediate next-day prediction is all we care about.
+            pred = pred[:, 0]
+
+            # On each day after the first, close the gap between the prediction and the actual value
+            # This does not look forward, it looks forward to account for entities with vastly incorrect magnitudes.
+            if day > 0:
+                print(results)
+                input('What')
+                yesterday_pred = results[-1]
+                actual_prices = seeable[:, -2]
+                gap = tf.subtract(actual_prices - yesterday_pred)
+                pred = tf.add(gap, pred)
+
+            # For all N, add its predictions to its containing list in the results dictionary
+            for i, c in enumerate(self.entities):
+                results[c].append(float(pred[i]))
+
+            print(f"Day {day} | ", end=' ')
+
+        # This will be useful for making retrieving the predictions later
+        # If x_test is always assumed to be at the tail of each dataset, then
+        results['seeable'] = list(seeable.shape)
+
+        with open(f'{new_directory}/{model_name}', 'w') as file:
+            json.dump(results, file, indent=1)
+
+        # self.entities = temp
+    # new and improved
+    def generate_predictions(self, model_name, model_dir, past, future, new_dir, sliding_window,
+                             model_type='lstm'):
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which custom objects are neccesary to be loaded in with each model.
+        if model_type == 'lstm':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif model_type == 'gcn':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+
+
+        # Create a dictionary with entity keys where all entities are an empty list to be appended
+        results = {}
+        idx = 0
+        for c in self.entities:
+            if idx > past.shape[0] - 1:
+                break
+            results[c] = []
+            idx += 1
+
+        print(f"Total number of days: {future.shape[1] - 1}")
+
+        # Make a prediction for every day in the future set.
+        for day in range(future.shape[1] - 1):
+
+            # If it's the first day we've only seen the past
+            if day == 0:
+                seeable = past
+            # If it's any day past the first, we've seen the past AND an expanding window
+            # of the future
+            elif day > 0:
+                seeable = future[:, 0:day, :]
+                seeable = tf.concat([past, seeable], axis=1)
+
+            # The seeable past needs to be truncated depending on the size of the window we would like to see
+            total = seeable.shape[1]
+            seeable = seeable[:, total - sliding_window:, :]
+
+            # Input of the model will change depending on LSTM or GCN
+            if model_type == 'lstm':
+                prediction = model.predict(tf.constant(seeable))
+            elif model_type == 'gcn':
+                prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+
+            # We only care about the first day prediction
+            prediction = prediction[:, 0]
+
+            # For all entities, append the predicted price to list to be saved with the entity name as the key
+            for i, c in enumerate(self.entities):
+                if i > past.shape[0] - 1:
+                    break
+                results[c].append(float(prediction[i]))
+
+            # Print out the day for watch-time purposes
+            print(f"Day {day+1} | ", end='')
+
+        # Save the shapes of the data trained over for back-logging
+        results['past'] = list(past.shape)
+        results['future'] = list(future.shape)
+
+        model_name = model_name + f"{sliding_window}win_{past.shape[1]}past_{future.shape[1]}fut"
+
+        with open(f'{new_dir}/{model_name}.json', 'w') as file:
+            json.dump(results, file, indent=1)
+
+    def generate_dot_file(self, model_name, model_dir, model_type):
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which custom objects are neccesary to be loaded in with each model.
+        if model_type == 'lstm':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif model_type == 'gcn':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+        dot_img_file = './ignorable_data/pictures'
+        return tf.keras.utils.plot_model(model, to_file=dot_img_file, show_shapes=True)
 
     # This variation of the strategy execution assumes that the highest values in the prediction list are the best
     # stock.
@@ -654,7 +1006,8 @@ class Graph_Predictions():
 
     # This variation of the strategy execution assumes that each value is simply a prediction of the next days price,
     # so the highest ranked choices for the day need to be calculated from the closing price
-    def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1, set='x_val'):
+    def prediction_json_strategy_determine_best(self, pm_name, name_override='', avoid_fall=True, average=1,
+                                                set='x_val'):
 
         working_set = []
         if set == 'x_test':
@@ -802,7 +1155,8 @@ class Graph_Predictions():
 
     # Saves the real RR given our predictions, the MSE between predicted RR and true RR, the Mean-Reciprocal-Rank
     # and the stock choice for the day
-    def generate_model_diagnostics(self, pm_name, name_override='', datablock_folder='RL_validation_set'):
+    def generate_model_diagnostics(self, pm_name, name_override='', datablock_folder='RL_validation_set',
+                                   rr_labels=False):
 
         # If these values haven't been calculated on this testing set yet, calculate them
         try:
@@ -851,7 +1205,10 @@ class Graph_Predictions():
             seen_price = self.working_set[:, day - 1, 0]
 
             # The predictinos given what we predict and what is ground truth prices
-            pred = tf.divide(tf.subtract(pred, seen_price), pred)
+            if not rr_labels:
+                pred = tf.divide(tf.subtract(pred, seen_price), pred)
+            else:
+                pred = np.array(pred)
             top_choice = np.argmax(pred)
             entity_choices_list.append(int(top_choice))
 
@@ -866,7 +1223,11 @@ class Graph_Predictions():
 
             # Calculate the MRR
             # Create lists for the predicted return ratios and actual return ratios
-            predictions = pred.numpy()
+            try:
+                predictions = pred.numpy()
+            except:
+                predictions = pred.copy()
+
             return_ratios = self.working_rr[:, day - 1].numpy()
 
             # This algorithm is very fast for accurate models, possibly slow for inaccurate models
@@ -921,6 +1282,692 @@ class Graph_Predictions():
         test_set_low = np.mean(self.strat_dict['000_Lowest_RR_Possible.p'])
         test_set_high = np.mean(self.strat_dict['000_Highest_RR_Possible.p'])
         test_set_average = np.mean(self.strat_dict['000_Avg_RR.p'])
+
+        avg_rr = np.mean(rr_list)
+        if avg_rr > 0:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_high - test_set_average))
+        else:
+            best_potential_score = float((avg_rr - test_set_average) / test_set_low - test_set_average) * -1
+
+        print(test_set_low, test_set_high, test_set_average, avg_rr)
+
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list,
+            "Best_Potential_Score": best_potential_score
+        }
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{datablock_folder}')
+        except:
+            None
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Since the pm_name has a directory attached, this will isolate the name
+        pm_name = pm_name.split('/')[-1]
+
+        with open(f'./{datablock_folder}/{pm_name}_DATABLOCK.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        self.strategy_results['RR_' + pm_name] = rr_list
+        # Save the current strategy results
+        self.save_results()
+
+    def generate_model_diagnostics_given_sets(self, pm_name, predicting_set, name_override='', try_all_pred=False,
+                                              datablock_folder='RL_validation_set', rr_labels=False):
+
+
+        #predicting_set - The time frame over which these predictions were made
+        #made_predictions- The predictions made as the model traversed this data_set
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Load in the prediction results as a dictionary
+        file = open(f'{pm_name}.json', 'r')
+        pm = json.load(file)
+
+        # Create a list of lists with shape (N, t)
+        made_predictions = [pm[c] for c in self.entities]
+        # Transpose the list so we can index it as (t, N)
+        made_predictions = np.array(made_predictions)
+        made_predictions_list = np.transpose(made_predictions)
+
+        # This is for testing outside of the model
+        self.test_obj = made_predictions_list
+        # print("we're out baby")
+        # return
+
+        if name_override:
+            pm_name = name_override
+
+        # Saves all RR values
+        rr_list = []
+
+        # extreme RR value
+        best_rr_list = []
+        worst_rr_list = []
+        avg_rr_list = []
+
+        # Saves the company choices at each day
+        entity_choices_list = []
+        # Saves the MSE
+        mse_list = []
+        # Saves the Rank-Loss
+        mrr_list = []
+
+        # print("Day: ", end='')
+        for day in range(1, predicting_set.shape[1] - 2):
+            # On day 1, the prediction model has SEEN the validation set and the first day of the test set
+            pred_today = made_predictions_list[day]
+            pred_previous = made_predictions_list[day-1]
+
+            if try_all_pred:
+                # What if we used the predicted price instead to account for 'off-scaled' prediction values?
+                seen_price = pred_previous
+            else:
+                # This is the ACTUAL price on day t-1
+                seen_price = predicting_set[:, day - 1, 0]
+
+            # Convert them to same datatype as everything else
+            seen_price = tf.constant(seen_price, dtype=tf.float32)
+            pred_today = tf.constant(pred_today, dtype=tf.float32)
+
+            pred_rr = None
+            # The predictions given what we predict and what is ground truth prices
+            if not rr_labels:
+                pred_rr = tf.divide(tf.subtract(pred_today, seen_price), seen_price)
+            else:
+                pred_rr = np.array(pred_today)
+
+            top_choice = np.argmax(pred_rr)
+            entity_choices_list.append(int(top_choice))
+
+            # print(f'Company: {top_choice}')
+            # print(f'Actual Price {seen_price[top_choice]}')
+            # print(f'Tomorrow Price {predicting_set[top_choice, day, 0]}')
+            # print(f'Predicted Price: {pred_previous[top_choice]}')
+            # print(f'Predicted Tomorrow: {pred_today[top_choice]}')
+            # print('##################')
+
+            # Index the return_ratio for the top company we selected given this day
+            # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
+            # we would be calculating the earning for holding for 1 day
+
+            # Actual return_ratio
+            actual_return_ratios = tf.divide(tf.subtract(predicting_set[:, day, 0], predicting_set[:, day - 1, 0]),
+                                             predicting_set[:, day - 1, 0])
+            rr_list.append(float(actual_return_ratios[top_choice]))
+
+            # extreme rr_values
+            best_rr_list.append(actual_return_ratios[np.argmax(actual_return_ratios)])
+            worst_rr_list.append(actual_return_ratios[np.argmin(actual_return_ratios)])
+            avg_rr_list.append(float(np.mean(actual_return_ratios)))
+
+            # Get the MSE
+            mse_list.append(float(mean_squared_error(tf.divide(tf.subtract(pred_today, predicting_set[:, day - 1, 0]),
+                                                               predicting_set[:, day - 1, 0]), actual_return_ratios)))
+
+            # Calculate the MRR
+            # Create lists for the predicted return ratios and actual return ratios
+            try:
+                predictions = pred_rr.numpy()
+            except:
+                predictions = pred_rr.copy()
+
+            return_ratios = actual_return_ratios.numpy()
+
+            # This algorithm is very fast for accurate models, possibly slow for inaccurate models
+            # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
+            # as the ACTUAL highest return_ratio, then it lowers this value past the previous minimum and
+            # searches for the next maximum. It repeats this until it determines the rank position
+            actual_top = np.argmax(return_ratios)
+            actual_bottom = np.argmin(predictions)
+            count = 1
+            for i in range(len(predictions)):
+                inner_max = np.argmax(predictions)
+                if inner_max == actual_top:
+                    break
+                else:
+                    count += 1
+                    predictions[inner_max] = predictions[actual_bottom] - 1
+            mrr_list.append(float(1 / count))
+
+            print(f'MRR: {float(count)}')
+            print(f'Return_R: {actual_return_ratios[top_choice]}')
+            print(f'Company: {top_choice}')
+            print(f'Actual Price {predicting_set[top_choice, day-1, 0]}')
+            print(f'Tomorrow Price {predicting_set[top_choice, day, 0]}')
+            print(f'Predicted Price: {pred_previous[top_choice]}')
+            print(f'Predicted Tomorrow: {pred_today[top_choice]}')
+            print('##################')
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set(entity_choices_list)) / predicting_set.shape[1])
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean(mrr_list))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        test_set_low = np.mean(worst_rr_list)
+        test_set_high = np.mean(best_rr_list)
+        test_set_average = np.mean(avg_rr_list)
+
+        avg_rr = np.mean(rr_list)
+        if avg_rr > 0:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_high - test_set_average))
+        else:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_low - test_set_average)) * -1
+
+        print(test_set_low, test_set_high, test_set_average, avg_rr)
+
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list,
+            "Best_Potential_Score": best_potential_score
+        }
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{datablock_folder}')
+        except:
+            None
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Since the pm_name has a directory attached, this will isolate the name
+        pm_name = pm_name.split('/')[-1]
+        pm_name = pm_name + '_DATABLOCK'
+
+        if try_all_pred:
+            pm_name = pm_name + '_ALLPRED'
+
+        with open(f'./{datablock_folder}/{pm_name}.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        self.strategy_results['RR_' + pm_name] = rr_list
+        # Save the current strategy results
+        self.save_results()
+
+    # new and improved
+    def generate_prediction_results(self, p_file_name, p_file_directory, future, new_dir,
+                                    model_type='lstm', close_gap=False, yesterday_pred=False, use_argmin=False):
+        # If the file name contains the file ending, remove it
+        p_file_name = p_file_name.split('.json')
+        p_file_name = p_file_name[0]
+
+        # Load in the prediction results as a dictionary
+        file = open(f'{p_file_directory}/{p_file_name}.json', 'r')
+        predictions_dict = json.load(file)
+
+        # Incase less than the total number of companies is being tested over
+        truncated_entities = self.entities[0:future.shape[0]]
+
+        predictions = [predictions_dict[c] for c in truncated_entities]
+
+        # Transpose for clarity, data is in the form (t, N)
+        predictions = np.array(predictions)
+        predictions = np.transpose(predictions)
+
+        # For debugging you can call this object after loading a file
+        self.test_obj = predictions
+
+        # Extreme RR values for comparisons on the dataset
+        best_rr_list = []; worst_rr_list = []; avg_rr_list = []
+
+        # Actual RR values given the predictions
+        rr_list = []
+
+        # Saves the company choices at each day
+        entity_choices_list = []; mse_list = []; mrr_list = []
+
+        # We start on day 1 to avoid needing the past data set for comparisons
+        # Might need to subtract 2 ?
+        for day in range(1, future.shape[1] - 1):
+            # The first day is 1, which is the day we've seen the past and the first day of the future
+            prediction_day = predictions[day, :]
+            # This is the most recent price we've used to formulate our prediction
+            seen_day = future[:, day-1, 0]
+
+            # In this strategy we use our prediction from yesterday instead of the actual price to avoid the y-axis
+            # shift problem
+            if yesterday_pred:
+                seen_day = predictions[day-1, :]
+
+            # To account for shifted Y-axis, we look at the previous gap in price and account for it on this dataset
+            if close_gap and day > 1:
+                # What was the gap between yesterdays price and the prediction for it?
+                # If we add that to our prediction, then we can account for shift in the axis
+                prediction_prev = predictions[day-1, :]
+                # gap = seen_day - prediction_prev
+                gap = future[:, day - 2, 0] - prediction_prev
+                prediction_day = prediction_day + gap
+
+            # Ensure that both variables are TF objects
+            prediction_day = tf.constant(prediction_day, dtype=tf.float32)
+            seen_day = tf.constant(seen_day, dtype=tf.float32)
+
+            # Given the price we think tomorrow will be, create a return_ratio
+            prediction_day_rr = tf.divide(tf.subtract(prediction_day, seen_day), seen_day)
+
+            # Given the predicted return ratios, which company should we buy?
+            if use_argmin:
+                top_choice = np.argmin(prediction_day_rr)
+            else:
+                top_choice = np.argmax(prediction_day_rr)
+            # Save that decision to a list
+            entity_choices_list.append(int(top_choice))
+
+            # Calculate the actual return_ratio for the day
+            actual_rr = tf.divide(tf.subtract(future[:, day, 0], future[:, day - 1, 0]), future[:, day - 1, 0])
+            # Save the return ratio for the company we selected as top_choice
+            rr_list.append(float(actual_rr[top_choice]))
+
+            # Extreme rr_values
+            best_rr_list.append(actual_rr[np.argmax(actual_rr)])
+            worst_rr_list.append(actual_rr[np.argmin(actual_rr)])
+            avg_rr_list.append(float(np.mean(actual_rr)))
+
+            # Calculate the MSE between the RR we predicted and the actual ones
+            mse_list.append(float(mean_squared_error(prediction_day_rr, actual_rr)))
+
+            # Calculate the rank of the stock choice we made on this day
+            temp_predictions = prediction_day_rr.numpy()
+            temp_actual_rr = actual_rr.numpy()
+
+            actual_top = np.argmax(temp_actual_rr)
+            actual_bottom = np.argmin(temp_predictions)
+            count = 1
+            for i in range(len(temp_predictions)):
+                inner_max = np.argmax(temp_predictions)
+                if inner_max == actual_top:
+                    break
+                else:
+                    count += 1
+                    temp_predictions[inner_max] = temp_predictions[actual_bottom] - 1
+            mrr_list.append(float(count))
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set(entity_choices_list)) / future.shape[1])
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean(mrr_list))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        test_set_low = np.mean(worst_rr_list)
+        test_set_high = np.mean(best_rr_list)
+        test_set_average = np.mean(avg_rr_list)
+        avg_rr = np.mean(rr_list)
+        if avg_rr > 0:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_high - test_set_average))
+        else:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_low - test_set_average)) * -1
+
+        # What values need to be saved to file?
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Average_RR": avg_rr, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list,
+            "Best_Potential_Score": best_potential_score
+        }
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{p_file_directory}')
+        except:
+            None
+
+        p_file_name = p_file_name + '_DATABLOCK'
+
+        if close_gap:
+            p_file_name = p_file_name + '_CLOSEGAP'
+
+        if use_argmin:
+            p_file_name = p_file_name + '_ARGMIN'
+
+        if yesterday_pred:
+            p_file_name = p_file_name + '_YESTPRED'
+
+        with open(f'./{new_dir}/{p_file_name}.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        self.strategy_results['RR_' + p_file_name] = rr_list
+        # Save the current strategy results
+        self.save_results()
+
+    def generate_model_diagnostics_given_sets_close_gap(self, pm_name, predicting_set, name_override='', try_all_pred=False,
+                                              datablock_folder='RL_validation_set', rr_labels=False):
+
+        # predicting_set - The time frame over which these predictions were made
+        # made_predictions- The predictions made as the model traversed this data_set
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Load in the prediction results as a dictionary
+        file = open(f'{pm_name}.json', 'r')
+        pm = json.load(file)
+
+        # Create a list of lists with shape (N, t)
+        made_predictions = [pm[c] for c in self.entities]
+        # Transpose the list so we can index it as (t, N)
+        made_predictions = np.array(made_predictions)
+        made_predictions_list = np.transpose(made_predictions)
+
+        # This is for testing outside of the model
+        self.test_obj = made_predictions_list
+        # print("we're out baby")
+        # return
+
+        if name_override:
+            pm_name = name_override
+
+        # Saves all RR values
+        rr_list = []
+
+        # extreme RR value
+        best_rr_list = []
+        worst_rr_list = []
+        avg_rr_list = []
+
+        # Saves the company choices at each day
+        entity_choices_list = []
+        # Saves the MSE
+        mse_list = []
+        # Saves the Rank-Loss
+        mrr_list = []
+
+        # print("Day: ", end='')
+
+        for day in range(1, predicting_set.shape[1] - 2):
+            # On day 1, the prediction model has SEEN the validation set and the first day of the test set
+            pred_today = made_predictions_list[day]
+            pred_previous = made_predictions_list[day - 1]
+
+            if try_all_pred:
+                # What if we used the predicted price instead to account for 'off-scaled' prediction values?
+                seen_price = pred_previous
+            else:
+                # This is the ACTUAL price on day t-1
+                seen_price = predicting_set[:, day - 1, 0]
+
+            # Convert them to same datatype as everything else
+            seen_price = tf.constant(seen_price, dtype=tf.float32)
+            pred_today = tf.constant(pred_today, dtype=tf.float32)
+
+            # Let's try accounting for the shift in the y-axis for predictions
+            # Using the seen price and what we predicted for it, create a gap for each company
+            gap = tf.constant(predicting_set[:, day - 2, 0] - pred_previous)
+            pred_today = tf.add(pred_today, gap)
+
+            pred_rr = None
+            # The predictions given what we predict and what is ground truth prices
+            if not rr_labels:
+                pred_rr = tf.divide(tf.subtract(pred_today, seen_price), seen_price)
+            else:
+                pred_rr = np.array(pred_today)
+
+            top_choice = np.argmax(pred_rr)
+            entity_choices_list.append(int(top_choice))
+
+            # print(f'Company: {top_choice}')
+            # print(f'Actual Price {seen_price[top_choice]}')
+            # print(f'Tomorrow Price {predicting_set[top_choice, day, 0]}')
+            # print(f'Predicted Price: {pred_previous[top_choice]}')
+            # print(f'Predicted Tomorrow: {pred_today[top_choice]}')
+            # print('##################')
+
+            # Index the return_ratio for the top company we selected given this day
+            # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
+            # we would be calculating the earning for holding for 1 day
+
+            # Actual return_ratio
+            actual_return_ratios = tf.divide(tf.subtract(predicting_set[:, day, 0], predicting_set[:, day - 1, 0]),
+                                             predicting_set[:, day - 1, 0])
+            rr_list.append(float(actual_return_ratios[top_choice]))
+
+            # extreme rr_values
+            best_rr_list.append(actual_return_ratios[np.argmax(actual_return_ratios)])
+            worst_rr_list.append(actual_return_ratios[np.argmin(actual_return_ratios)])
+            avg_rr_list.append(float(np.mean(actual_return_ratios)))
+
+            # Get the MSE
+            mse_list.append(float(mean_squared_error(tf.divide(tf.subtract(pred_today, predicting_set[:, day - 1, 0]),
+                                                               predicting_set[:, day - 1, 0]), actual_return_ratios)))
+
+            # Calculate the MRR
+            # Create lists for the predicted return ratios and actual return ratios
+            try:
+                predictions = pred_rr.numpy()
+            except:
+                predictions = pred_rr.copy()
+
+            return_ratios = actual_return_ratios.numpy()
+
+            # This algorithm is very fast for accurate models, possibly slow for inaccurate models
+            # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
+            # as the ACTUAL highest return_ratio, then it lowers this value past the previous minimum and
+            # searches for the next maximum. It repeats this until it determines the rank position
+            actual_top = np.argmax(return_ratios)
+            actual_bottom = np.argmin(predictions)
+            count = 1
+            for i in range(len(predictions)):
+                inner_max = np.argmax(predictions)
+                if inner_max == actual_top:
+                    break
+                else:
+                    count += 1
+                    predictions[inner_max] = predictions[actual_bottom] - 1
+            mrr_list.append(float(1 / count))
+
+            print(f'MRR: {float(count)}')
+            print(f'Return_R: {actual_return_ratios[top_choice]}')
+            print(f'Company: {top_choice}')
+            print(f'Actual Price {predicting_set[top_choice, day - 1, 0]}')
+            print(f'Tomorrow Price {predicting_set[top_choice, day, 0]}')
+            print(f'Predicted Price: {pred_previous[top_choice]}')
+            print(f'Predicted Tomorrow: {pred_today[top_choice]}')
+            print('##################')
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set(entity_choices_list)) / predicting_set.shape[1])
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean(mrr_list))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        test_set_low = np.mean(worst_rr_list)
+        test_set_high = np.mean(best_rr_list)
+        test_set_average = np.mean(avg_rr_list)
+
+        avg_rr = np.mean(rr_list)
+        if avg_rr > 0:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_high - test_set_average))
+        else:
+            best_potential_score = float((avg_rr - test_set_average) / (test_set_low - test_set_average)) * -1
+
+        print(test_set_low, test_set_high, test_set_average, avg_rr)
+
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list,
+            "Best_Potential_Score": best_potential_score
+        }
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{datablock_folder}')
+        except:
+            None
+
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Since the pm_name has a directory attached, this will isolate the name
+        pm_name = pm_name.split('/')[-1]
+        pm_name = pm_name + '_DATABLOCK'
+
+        if try_all_pred:
+            pm_name = pm_name + '_ALLPRED'
+
+        with open(f'./{datablock_folder}/{pm_name}.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        self.strategy_results['RR_' + pm_name] = rr_list
+        # Save the current strategy results
+        self.save_results()
+
+    def graph_model_prediction_given_sets(self, pm_name, pred_over, name_override='',
+                                              datablock_folder='RL_validation_set', rr_labels=False):
+
+        # self.entities = self.entities[0:2]
+        # If the .json file was already attached, this will fix the problem
+        pm_name = pm_name.split('.json')
+        pm_name = pm_name[0]
+
+        # Load in the prediction results as a dictionary
+        file = open(f'{pm_name}.json', 'r')
+        pm = json.load(file)
+
+        # Create a list of lists with shape (N, t)
+
+        # Incase less than the total number of companies is being tested over
+        truncated_entities = self.entities[0:pred_over.shape[0]]
+        pred = [pm[c] for c in truncated_entities]
+        # Transpose the list so we can index it as (t, N)
+        pred = np.array(pred)
+        pred_list = np.transpose(pred)
+
+        self.test_obj = pred_list
+        input('Have Predictions')
+        return
+
+        if name_override:
+            pm_name = name_override
+
+        # Saves all RR values
+        rr_list = []
+
+        # extreme RR value
+        best_rr_list = []
+        worst_rr_list = []
+        avg_rr_list = []
+
+        # Saves the company choices at each day
+        entity_choices_list = []
+        # Saves the MSE
+        mse_list = []
+        # Saves the Rank-Loss
+        mrr_list = []
+
+        # print("Day: ", end='')
+        for day in range(1, pred_over.shape[1] - 2):
+            # On day 1, the prediction model has SEEN the validation set and the first day of the test set
+            pred = pred_list[day]
+
+            seen_price = pred_over[:, day - 1, 0]
+
+            # The predictinos given what we predict and what is ground truth prices
+            if not rr_labels:
+                pred = tf.divide(tf.subtract(pred, seen_price), seen_price)
+            else:
+                pred = np.array(pred)
+
+            top_choice = np.argmax(pred)
+            entity_choices_list.append(int(top_choice))
+
+            # Index the return_ratio for the top company we selected given this day
+            # So if we purchase the stock at its closing price on day-1 and sell it at the end of the day this is what
+            # we would be calculating the earning for holding for 1 day
+
+            # Actual return_ratio
+            actual_return_ratios = tf.divide(tf.subtract(pred_over[:, day, 0], pred_over[:, day - 1, 0]),
+                                             pred_over[:, day - 1, 0])
+            rr_list.append(float(actual_return_ratios[top_choice]))
+
+            # extreme rr_values
+            best_rr_list.append(actual_return_ratios[np.argmax(actual_return_ratios)])
+            worst_rr_list.append(actual_return_ratios[np.argmin(actual_return_ratios)])
+            avg_rr_list.append(float(np.mean(actual_return_ratios)))
+
+            # Get the MSE
+            mse_list.append(float(mean_squared_error(pred, actual_return_ratios)))
+
+            # Calculate the MRR
+            # Create lists for the predicted return ratios and actual return ratios
+            try:
+                predictions = pred.numpy()
+            except:
+                predictions = pred.copy()
+
+            return_ratios = actual_return_ratios.numpy()
+
+            # This algorithm is very fast for accurate models, possibly slow for inaccurate models
+            # Iteritively returns the highest return_ratio in the prediction set. If it's not the same
+            # as the ACTUAL highest return_ratio, then it lowers this value past the previous minimum and
+            # searches for the next maximum. It repeats this until it determines the rank position
+            actual_top = np.argmax(return_ratios)
+            actual_bottom = np.argmin(predictions)
+            count = 1
+            for i in range(len(predictions)):
+                inner_max = np.argmax(predictions)
+                if inner_max == actual_top:
+                    break
+                else:
+                    count += 1
+                    predictions[inner_max] = predictions[actual_bottom] - 1
+            mrr_list.append(float(1 / count))
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set(entity_choices_list)) / pred_over.shape[1])
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean(mrr_list))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        test_set_low = np.mean(worst_rr_list)
+        test_set_high = np.mean(best_rr_list)
+        test_set_average = np.mean(avg_rr_list)
 
         avg_rr = np.mean(rr_list)
         if avg_rr > 0:
@@ -1035,7 +2082,8 @@ class Graph_Predictions():
                                     label_offset='50px', )
 
                         line = [Lines(labels=[d_obj[i][0]], x=x_data, y=y_data[i], scales={'x': x_scale, 'y': y_scale},
-                                      colors=[colors_list[i]], display_legend=False, line_styles=line_styles[i]) for i in
+                                      colors=[colors_list[i]], display_legend=False, line_styles=line_styles[i]) for i
+                                in
                                 range(0, len(d_obj))]
 
                         # Function to run when we hover over a scatter point
@@ -1095,7 +2143,6 @@ class Graph_Predictions():
                         # Display the VBox on hover
                         display(out_box)
 
-
                         display(fig, toolbar)
 
                     def float_graph(d_obj, key):
@@ -1145,7 +2192,7 @@ class Graph_Predictions():
                         display(out_box)
 
                         old_names = list(names)
-                        names = [' '*i for i in range(len(names))]
+                        names = [' ' * i for i in range(len(names))]
 
                         df = pd.DataFrame(
                             index=['NaN'],
@@ -1156,7 +2203,7 @@ class Graph_Predictions():
                         x_scale = OrdinalScale()
                         y_scale = LinearScale()
                         bar = Bars(x=df.columns, y=df.iloc[0], scales={'x': x_scale, 'y': y_scale},
-                                   labels=df.index[1:].tolist(), colors=colors_list, display_legend=True )
+                                   labels=df.index[1:].tolist(), colors=colors_list, display_legend=True)
 
                         ord_ax = Axis(label="Models", scale=x_scale, grid_lines='none')
                         y_ax = Axis(label=f'{key}', scale=y_scale, orientation='vertical',
@@ -1174,6 +2221,7 @@ class Graph_Predictions():
                                       f'{colors_list[idx]}">{old_names[idx]}</span>')
 
                             chart.tooltip = out
+
                         bar.on_hover(display_name)
 
                         display(fig)
@@ -1255,3 +2303,19 @@ class Graph_Predictions():
         )
         # Run the input string though the file selection box
         widgets.interact(data_blocks, search_string=search_string)
+
+    def add_daily_value_to_datablock(self, datablock, datablock_dir):
+        obj = json.load(open(f'{datablock_dir}/{datablock}', 'r'))
+        rr_values = obj['Return_Ratio_List']
+        investment = 10000
+        investment_values = []
+        for r in rr_values:
+            investment = investment * (1 + r)
+            investment_values.append(investment)
+
+        obj['Investment_Value_List'] = investment_values
+
+        json.dump(obj, open(f'{datablock_dir}/{datablock}', 'w'), indent=1)
+
+
+
