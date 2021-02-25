@@ -838,7 +838,7 @@ class Graph_Predictions():
         # self.entities = temp
     # new and improved
     def generate_predictions(self, model_name, model_dir, past, future, new_dir, sliding_window,
-                             model_type='lstm'):
+                             model_type='lstm', selected_time_step=-1, stop_at=None, batch_size=None):
 
         print(f"\nLoading Model: '{model_name}'")
 
@@ -884,12 +884,13 @@ class Graph_Predictions():
 
             # Input of the model will change depending on LSTM or GCN
             if model_type == 'lstm':
-                prediction = model.predict(tf.constant(seeable))
+                prediction = model.predict(tf.constant(seeable), batch_size=batch_size)
             elif model_type == 'gcn':
-                prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix])
+                prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix],
+                                           batch_size=batch_size)
 
             # We only care about the first day prediction
-            prediction = prediction[:, 0]
+            prediction = prediction[:, selected_time_step]
 
             # For all entities, append the predicted price to list to be saved with the entity name as the key
             for i, c in enumerate(self.entities):
@@ -900,6 +901,11 @@ class Graph_Predictions():
             # Print out the day for watch-time purposes
             print(f"Day {day+1} | ", end='')
 
+            # Given we just want a couple of predictions for consolidarity, this can be used.
+            if stop_at is not None:
+                if day > stop_at:
+                    break
+
         # Save the shapes of the data trained over for back-logging
         results['past'] = list(past.shape)
         results['future'] = list(future.shape)
@@ -908,6 +914,61 @@ class Graph_Predictions():
 
         with open(f'{new_dir}/{model_name}.json', 'w') as file:
             json.dump(results, file, indent=1)
+
+    def return_embeddings(self, model_name, model_dir, past, future, new_dir, sliding_window,
+                             model_type='lstm', selected_time_step=-1, stop_at=None, batch_size=None):
+
+        print(f"\nLoading Model: '{model_name}'")
+
+        # Specify which custom objects are neccesary to be loaded in with each model.
+        if model_type == 'lstm':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif model_type == 'gcn':
+            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        else:
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
+
+        # Create a dictionary with entity keys where all entities are an empty list to be appended
+        results = {}
+        idx = 0
+        for c in self.entities:
+            if idx > past.shape[0] - 1:
+                break
+            results[c] = []
+            idx += 1
+
+        print(f"Total number of days: {future.shape[1] - 1}")
+
+        # Make a prediction for every day in the future set.
+        for day in range(future.shape[1] - 1):
+
+            # If it's the first day we've only seen the past
+            if day == 0:
+                seeable = past
+            # If it's any day past the first, we've seen the past AND an expanding window
+            # of the future
+            elif day > 0:
+                seeable = future[:, 0:day, :]
+                seeable = tf.concat([past, seeable], axis=1)
+
+            # The seeable past needs to be truncated depending on the size of the window we would like to see
+            total = seeable.shape[1]
+            seeable = seeable[:, total - sliding_window:, :]
+
+            print(seeable.shape)
+
+            # Input of the model will change depending on LSTM or GCN
+            if model_type == 'lstm':
+                prediction = model.predict(tf.constant(seeable), batch_size=batch_size)
+            elif model_type == 'gcn':
+                prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix],
+                                           batch_size=batch_size)
+
+            return prediction
 
     def generate_dot_file(self, model_name, model_dir, model_type):
 
@@ -2314,6 +2375,40 @@ class Graph_Predictions():
             investment_values.append(investment)
 
         obj['Investment_Value_List'] = investment_values
+
+        json.dump(obj, open(f'{datablock_dir}/{datablock}', 'w'), indent=1)
+
+    def add_daily_value_to_datablock_discontinuous(self, datablock, datablock_dir):
+        obj = json.load(open(f'{datablock_dir}/{datablock}', 'r'))
+        rr_values = obj['Return_Ratio_List']
+        total = 10000
+        portfolio = []
+        for r in rr_values:
+            if total < 10000:
+                invest = total
+            else:
+                invest = 10000
+            # Spend the money
+            total = total - invest
+            # Multiply it by our choice
+            earnings = invest * (1 + r)
+            # Add it back to our total
+            total = total + earnings
+            # Append it to the list and go to the next day
+            portfolio.append(total)
+
+
+        obj['Discontinuous_Investment_Value_List'] = portfolio
+
+        json.dump(obj, open(f'{datablock_dir}/{datablock}', 'w'), indent=1)
+
+    def add_cumulative_return_ratio_discontinuous(self, datablock, datablock_dir):
+        obj = json.load(open(f'{datablock_dir}/{datablock}', 'r'))
+        final_total = obj['Discontinuous_Investment_Value_List']
+        # Pull out the last value of the Discontinuous Investment Value List trading strategy.
+        final_total = final_total[-1]
+        # Add to the datablocks
+        obj['Discontinuous_Cumulative_Return_Ratio'] = final_total / 10000
 
         json.dump(obj, open(f'{datablock_dir}/{datablock}', 'w'), indent=1)
 

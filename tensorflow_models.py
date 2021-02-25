@@ -222,14 +222,87 @@ def rank_loss_func_rr(rr_train, rr_val, alpha=1e-6, beta=1, forecast=1):
     # Return the RLF function instance
     return rlf
 
+
+def mse_rr(y_actual, y_pred):
+    # Slice the final predicted time step from the actual value
+    # This represents how many days into the future we're forecasting
+    y_actual_last = y_actual[:, -1:]
+    y_pred_last = y_pred[:, -1:]
+
+    # Calculate return ratio
+    pred_return_ratio = tf.math.divide(tf.math.subtract(y_pred_last, y_actual_last), y_actual_last)
+    actual_return_ratio = tf.math.divide(tf.math.subtract(y_actual[:, -2:-1], y_actual[:, -1:]), y_actual[:, -2:-1])
+
+    mse = tf.keras.losses.mean_squared_error(pred_return_ratio, actual_return_ratio)
+
+    loss = mse
+
+    return loss
+
+def rank_loss_rr(y_actual, y_pred):
+    # Slice the final predicted time step from the actual value
+    # This represents how many days into the future we're forecasting
+    y_actual_last = y_actual[:, -1:]
+    y_pred_last = y_pred[:, -1:]
+
+    # Calculate return ratio
+    pred_return_ratio = tf.math.divide(tf.math.subtract(y_pred_last, y_actual_last), y_actual_last)
+    actual_return_ratio = tf.math.divide(tf.math.subtract(y_actual[:, -2:-1], y_actual[:, -1:]), y_actual[:, -2:-1])
+    mse = tf.keras.losses.mean_squared_error(pred_return_ratio, actual_return_ratio)
+
+    # Create an array of all_ones so that we can calculate all permutations of subtractions
+    all_ones = tf.ones([y_actual_last.shape[0], 1], dtype=tf.float32)
+
+    # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
+    # company
+    pred_dif = tf.math.subtract(
+        tf.matmul(pred_return_ratio, all_ones, transpose_b=True),
+        tf.matmul(all_ones, pred_return_ratio, transpose_b=True)
+    )
+
+    # Creates an N x N matrix containing every actual return ratio for each company subtracted with every other
+    # company By switching the order of the all_ones matricies and the actual prices, a negative sign is introduced
+    # When RELU is applied later, correct predictions will not affect loss while incorrect predictions will affect
+    # loss depending on how incorrect the prediction was
+    actual_dif = tf.math.subtract(
+        tf.matmul(all_ones, actual_return_ratio, transpose_b=True),
+        tf.matmul(actual_return_ratio, all_ones, transpose_b=True)
+    )
+
+    # Using the above two qualities, the algorithm can be punished for incorrectly calculating when a company is
+    # doing better than another company Reduces the mean across each dimension until only 1 value remains
+    rank_loss = tf.reduce_mean(
+        # Takes if a given value is >0, it is kept, otherwise, it becomes 0
+        tf.nn.relu(
+            # Multiplies all of the
+            tf.multiply(pred_dif, actual_dif)
+        )
+    )
+
+    loss = (tf.cast(1000, tf.float32) * rank_loss) + (mse)
+    # loss = (tf.cast(1, tf.float32) * rank_loss)
+
+    return loss
+
 # Define a custom layer in Tensorflow 2.0 to implement a matrix multiplication
 # operation using the output of an LSTM layer and another given matrix
 class Ein_Multiply(tf.keras.layers.Layer):
     def __init__(self, name=None, **kwargs):
         super(Ein_Multiply, self).__init__()
 
-    def call(self, input):
-        return tf.einsum('ij,ik->ik', input[0], input[1])
+    def call(self, input_m):
+        # What we've been using that works
+        # return tf.einsum('ij,ik->ik', input[0], input[1])
+        # What I think the result SHOULD be using
+        # return tf.einsum('ij,jk->ik', input[0], input[1])
+
+        # This is just multipling the LAST time step by the information
+        # Cannot use because of item assignment
+        # input[1][:, -1, :] = tf.einsum('ij,ik->ik', input[0], input[1][:, -1, :])
+        # return input[1]
+        # Yunings first suggestion
+        return tf.einsum('mn,ntd->mtd', input_m[0], input_m[1])
+
 
 
 # Create a function for the Tensorflow implementation of Tensorflow 2
@@ -257,6 +330,11 @@ class TF_Models(Graph_Entities):
             self.entities, self.entities_idx = super()._generate_list_of_entities(data_path)
             self.relations_dict = super()._generate_relations()
             self.Normalized_Adjacency_Matrix = super()._generate_normalized_ajacency_matrix()
+
+            # # Expanding Dimensions
+            # self.Normalized_Adjacency_Matrix = tf.expand_dims(self.Normalized_Adjacency_Matrix, axis=1)
+            # input("")
+
             self.XX_tf = self._load_data_into_TF()
             self.YY_tf = self._create_labels()
             # Create the ground truth return ratios

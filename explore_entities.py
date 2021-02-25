@@ -7,9 +7,9 @@ import numpy as np
 from IPython.display import display
 import ipywidgets as widgets
 from ipywidgets import Layout, GridBox
-# from bqplot import (
-#     LinearScale, Lines, Axis, Figure, Toolbar
-# )
+from bqplot import (
+    LinearScale, Lines, Axis, Figure, Toolbar
+)
 
 import json
 import random
@@ -32,12 +32,15 @@ def return_idx(item, l):
 
 
 class Graph_Entities():
-    def __init__(self, data_path, reload=False):
+    def __init__(self, data_path, reload=False, NAM=None, normal=True):
         # The directory where all the entities time_series CSV are stored
         self.data_path = data_path
         self.entities, self.entities_idx = self._generate_list_of_entities(data_path)
         self.relations_dict = self._generate_relations()
-        self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+        if normal:
+            self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+        else:
+            self.Normalized_Adjacency_Matrix = NAM
 
     '''Using the names of .csv files in the data_set directory, loads the entities as a list into memory'''
 
@@ -113,30 +116,40 @@ class Graph_Entities():
         # Only used for validation
         if random_nam_test:
             print('Randomized NAM Test:')
-            for i in range(len(RR_t)-1):
+            for i in range(len(RR_t) - 1):
                 print(i, end=' ')
-                for j in range(len(RR_t[0])-1):
-                    for k in range(len(RR_t[0][0])-1):
+                for j in range(len(RR_t[0]) - 1):
+                    for k in range(len(RR_t[0][0]) - 1):
                         # If j = k, then that 1 should be the self-relation
                         if RR_t[i][j][k] == 1 and j != k:
                             RR_t[i][j][k] = 0
-                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0]) - 1)] = 1
 
                             # Also add spontaneous chance to modify the matrix
                             if random.uniform(0, 1) < 0.01:
-                                random_relation = random.randint(0, len(RR_t[0][0])-1)
+                                random_relation = random.randint(0, len(RR_t[0][0]) - 1)
                                 if RR_t[i][j][random_relation] == 0:
                                     RR_t[i][j][random_relation] = 1
                                 else:
                                     RR_t[i][j][random_relation] = 0
 
-
         # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
+        # print(RR_tf.shape)
         RR_tf = tf.transpose(RR_tf)
+        # print(RR_tf.shape)
         relation_encoding = RR_tf.numpy()
-        rel_shape = [relation_encoding.shape[0], relation_encoding.shape[1]]
-        mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=2))
+        rel_shape = [relation_encoding.shape[1], relation_encoding.shape[2]]
+        mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=1))
+
+
+        # with np.printoptions(threshold=np.inf):
+        #     print(mask_flags[1, :])
+        #     print(mask_flags[2, :])
+        #     print(mask_flags[3, :])
+        #     print(mask_flags[:, 1])
+        #     print(mask_flags[:, 2])
+        #     print(mask_flags[:, 3])
 
         # Increment the loading bar
         bar.value += 1
@@ -162,8 +175,12 @@ class Graph_Entities():
         GCN_mat = np.nan_to_num(GCN_mat)
         GCN_mat = tf.constant(GCN_mat)
 
+        print(GCN_mat[10, 20])
+        print(GCN_mat[99, 700])
+
         # Close the loading bar
         loading_bar.close()
+
         return GCN_mat
 
     '''Returns a list of neighboring entities to the given an entity, includes the given entity'''
