@@ -68,10 +68,12 @@ class Graph_Predictions():
         self.working_set = None
         if main_set_type == 'x_val':
             self.working_set = self.x_val
-            self.working_rr = tensorflow_model_obj.data_splits['rr_val']
+            # Temp while NAM is broken
+            self.working_rr = tensorflow_model_obj.data_splits['rr_val'][0:-1, :]
         elif main_set_type == 'x_test':
             self.working_set = self.x_test
-            self.working_rr = tensorflow_model_obj.data_splits['rr_test']
+            # Temp while NAM is broken
+            self.working_rr = tensorflow_model_obj.data_splits['rr_test'][0:-1, :]
         else:
             os.error('The main_set_type must be specified')
         self.num_entities = self.working_set.shape[0]
@@ -1568,7 +1570,8 @@ class Graph_Predictions():
 
     # new and improved
     def generate_prediction_results(self, p_file_name, p_file_directory, future, new_dir,
-                                    model_type='lstm', close_gap=False, yesterday_pred=False, use_argmin=False):
+                                    model_type='lstm', close_gap=False, yesterday_pred=False, use_argmin=False,
+                                    rr_labels=False):
         # If the file name contains the file ending, remove it
         p_file_name = p_file_name.split('.json')
         p_file_name = p_file_name[0]
@@ -1624,8 +1627,11 @@ class Graph_Predictions():
             prediction_day = tf.constant(prediction_day, dtype=tf.float32)
             seen_day = tf.constant(seen_day, dtype=tf.float32)
 
-            # Given the price we think tomorrow will be, create a return_ratio
-            prediction_day_rr = tf.divide(tf.subtract(prediction_day, seen_day), seen_day)
+            if not rr_labels:
+                # Given the price we think tomorrow will be, create a return_ratio
+                prediction_day_rr = tf.divide(tf.subtract(prediction_day, seen_day), seen_day)
+            else:
+                prediction_day_rr = prediction_day
 
             # Given the predicted return ratios, which company should we buy?
             if use_argmin:

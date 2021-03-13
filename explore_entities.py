@@ -116,40 +116,30 @@ class Graph_Entities():
         # Only used for validation
         if random_nam_test:
             print('Randomized NAM Test:')
-            for i in range(len(RR_t) - 1):
+            for i in range(len(RR_t)-1):
                 print(i, end=' ')
-                for j in range(len(RR_t[0]) - 1):
-                    for k in range(len(RR_t[0][0]) - 1):
+                for j in range(len(RR_t[0])-1):
+                    for k in range(len(RR_t[0][0])-1):
                         # If j = k, then that 1 should be the self-relation
                         if RR_t[i][j][k] == 1 and j != k:
                             RR_t[i][j][k] = 0
-                            RR_t[i][j][random.randint(0, len(RR_t[0][0]) - 1)] = 1
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
 
                             # Also add spontaneous chance to modify the matrix
                             if random.uniform(0, 1) < 0.01:
-                                random_relation = random.randint(0, len(RR_t[0][0]) - 1)
+                                random_relation = random.randint(0, len(RR_t[0][0])-1)
                                 if RR_t[i][j][random_relation] == 0:
                                     RR_t[i][j][random_relation] = 1
                                 else:
                                     RR_t[i][j][random_relation] = 0
 
+
         # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
-        # print(RR_tf.shape)
         RR_tf = tf.transpose(RR_tf)
-        # print(RR_tf.shape)
         relation_encoding = RR_tf.numpy()
-        rel_shape = [relation_encoding.shape[1], relation_encoding.shape[2]]
-        mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=1))
-
-
-        # with np.printoptions(threshold=np.inf):
-        #     print(mask_flags[1, :])
-        #     print(mask_flags[2, :])
-        #     print(mask_flags[3, :])
-        #     print(mask_flags[:, 1])
-        #     print(mask_flags[:, 2])
-        #     print(mask_flags[:, 3])
+        rel_shape = [relation_encoding.shape[0], relation_encoding.shape[1]]
+        mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=2))
 
         # Increment the loading bar
         bar.value += 1
@@ -175,13 +165,109 @@ class Graph_Entities():
         GCN_mat = np.nan_to_num(GCN_mat)
         GCN_mat = tf.constant(GCN_mat)
 
-        print(GCN_mat[10, 20])
-        print(GCN_mat[99, 700])
+        # Close the loading bar
+        loading_bar.close()
+        return GCN_mat
+
+    def get_matrix_components(self, random_nam_test=False):
+
+        # Used to display the loading bar in JupyterNotebook
+        bar = widgets.IntProgress(min=0, max=int(len(self.entities) * 3.2), value=0,
+                                  layout=Layout(width='auto'))
+        text = widgets.Text(value='Loading Normalized Adjacency Matrix:', description='', disabled=True,
+                            layout=Layout(width='auto'))
+        loading_bar = GridBox(children=[text, bar], layout=Layout(width='auto'))
+        display(loading_bar)
+
+        companies = self.entities
+        new_industry_relations = self.relations_dict
+
+        # Iterate through each company ticker and replace it with a tuple that contains its index and ticker
+        for key, value in new_industry_relations.items():
+            new_value = []
+            for v in value:
+                new_value.append((return_idx(v, companies), v))
+            new_industry_relations[key] = new_value
+
+        # Iterate through each industry relationship and create an N x N adjacency matrix
+        # Combine them all to create the final adjacency matrix in the same format as Paper #2
+        RR_t = []
+        for sector in new_industry_relations.keys():
+            # Create an empty relationship matrix
+            all_zeroes = tf.zeros([len(companies), len(companies)])
+            relation_slice = all_zeroes.numpy()
+
+            # Gather all the companies that exist in this sector
+            siblings = new_industry_relations[sector]
+            for i in siblings:
+                # Increment the loading bar
+                bar.value += 3
+                for j in siblings:
+                    relation_slice[i[0], j[0]] = 1
+                    relation_slice[j[0], i[0]] = 1
+            RR_t.append(relation_slice)
+
+        # Increment the loading bar
+        bar.value += 1
+
+        # Creates a randomized NAM with the same total number of relations as the original input
+        # Only used for validation
+        if random_nam_test:
+            print('Randomized NAM Test:')
+            for i in range(len(RR_t)-1):
+                print(i, end=' ')
+                for j in range(len(RR_t[0])-1):
+                    for k in range(len(RR_t[0][0])-1):
+                        # If j = k, then that 1 should be the self-relation
+                        if RR_t[i][j][k] == 1 and j != k:
+                            RR_t[i][j][k] = 0
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
+
+                            # Also add spontaneous chance to modify the matrix
+                            if random.uniform(0, 1) < 0.01:
+                                random_relation = random.randint(0, len(RR_t[0][0])-1)
+                                if RR_t[i][j][random_relation] == 0:
+                                    RR_t[i][j][random_relation] = 1
+                                else:
+                                    RR_t[i][j][random_relation] = 0
+
+
+        # Create the proper structure to apply the matrix multiplication
+        RR_tf = tf.constant(RR_t)
+        RR_tf = tf.transpose(RR_tf)
+        relation_encoding = RR_tf.numpy()
+        rel_shape = [relation_encoding.shape[0], relation_encoding.shape[1]]
+        mask_flags = np.equal(np.zeros(rel_shape, dtype=int), np.sum(relation_encoding, axis=2))
+
+        # Increment the loading bar
+        bar.value += 1
+
+        # Calculate the adjacency matrix and add the self-loops from the identity matrix if neccessary
+        ajacent = np.where(mask_flags, np.zeros(rel_shape, dtype=float), np.ones(rel_shape, dtype=float))
+        ajacent = ajacent + np.identity(ajacent.shape[0])
+        ajacent = np.where(ajacent > 1, 1, ajacent)
+
+        # Calculate the Diagonal Degree Matrix
+        degree = np.sum(ajacent, axis=0)
+        for i in range(len(degree)):
+            degree[i] = 1.0 / degree[i]
+
+        # Raise it to the power of -1/2
+        np.sqrt(degree, degree)
+        deg_neg_half_power = np.diag(degree)
+
+        # This is the Normalized Adjacency Matrix (D^-1/2*(A)*D^-1/2)
+        GCN_mat = np.dot(np.dot(deg_neg_half_power, ajacent), deg_neg_half_power)
+
+        # Some values were NaN during calculation, so they are replaced with zero
+        GCN_mat = np.nan_to_num(GCN_mat)
+        GCN_mat = tf.constant(GCN_mat)
 
         # Close the loading bar
         loading_bar.close()
+        RR_t = np.asarray(RR_t)
+        return GCN_mat, ajacent, RR_t
 
-        return GCN_mat
 
     '''Returns a list of neighboring entities to the given an entity, includes the given entity'''
 
