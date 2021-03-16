@@ -28,6 +28,7 @@ def return_idx(item, l):
         else:
             i += 1
     # If it's not in the list, then it's failed
+    raise IndexError('The item you passed was not within the list you provided')
     return None
 
 
@@ -182,11 +183,13 @@ class Graph_Entities():
         companies = self.entities
         new_industry_relations = self.relations_dict
 
+
+
         # Iterate through each company ticker and replace it with a tuple that contains its index and ticker
         for key, value in new_industry_relations.items():
             new_value = []
             for v in value:
-                new_value.append((return_idx(v, companies), v))
+                new_value.append((return_idx(v[1], companies), v))
             new_industry_relations[key] = new_value
 
         # Iterate through each industry relationship and create an N x N adjacency matrix

@@ -295,7 +295,9 @@ class Ein_Multiply(tf.keras.layers.Layer):
         # Cannot use because of item assignment
         # input[1][:, -1, :] = tf.einsum('ij,ik->ik', input[0], input[1][:, -1, :])
         # return input[1]
-        # Yunings first suggestion
+
+        # Yunings first suggestion, where the time-dimension is left the same size, but the multiplation occurs on the
+        # outer layer
         return tf.einsum('mn,ntd->mtd', input_m[0], input_m[1])
 
 
