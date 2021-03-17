@@ -285,7 +285,7 @@ class Ein_Multiply(tf.keras.layers.Layer):
     def __init__(self, name=None, **kwargs):
         super(Ein_Multiply, self).__init__()
 
-    def call(self, input_m):
+    def call(self, input_m, tag):
         # What we've been using that works
         # return tf.einsum('ij,ik->ik', input[0], input[1])
         # What I think the result SHOULD be using
@@ -298,9 +298,9 @@ class Ein_Multiply(tf.keras.layers.Layer):
 
         # Yunings first suggestion, where the time-dimension is left the same size, but the multiplation occurs on the
         # outer layer
-        return tf.einsum('mn,ntd->mtd', input_m[0], input_m[1])
+        return tf.einsum(tag, input_m[0], input_m[1])
 
-
+# time dimension tag: 'mn,ntd->mtd'
 
 # Create a function for the Tensorflow implementation of Tensorflow 2
 def leaky_relu(x):
@@ -1179,3 +1179,5 @@ class TF_Models(Graph_Entities):
             return None
         with open(self.data_path + fr'/parsed_data.p', 'rb') as read:
             return pickle.load(read)
+
+tf.keras.layers.Dense()
