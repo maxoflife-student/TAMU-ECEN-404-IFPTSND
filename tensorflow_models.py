@@ -278,6 +278,131 @@ def rank_loss_rr_labels(y_actual, y_pred):
 
     return loss
 
+def rank_loss_rr_explicit(y_actual, y_pred):
+
+    # Slice the final predicted time step from the actual value
+    # This represents how many days into the future we're forecasting
+    y_actual_last = y_actual[:, -1:]
+    # Doesn't need to be truncated
+    y_pred_last = y_pred
+
+
+
+    # Calculate return ratio
+    pred_return_ratio = tf.math.divide(tf.math.subtract(y_pred_last, y_actual_last), y_actual_last)
+    actual_return_ratio = tf.math.divide(tf.math.subtract(y_actual[:, -2:-1], y_actual[:, -1:]), y_actual[:, -2:-1])
+    mse = tf.keras.losses.mean_squared_error(pred_return_ratio, actual_return_ratio)
+
+    # Create an array of all_ones so that we can calculate all permutations of subtractions
+    all_ones = tf.ones([y_actual_last.shape[0], 1], dtype=tf.float32)
+
+    # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
+    # company
+    pred_dif = tf.math.subtract(
+        tf.matmul(pred_return_ratio, all_ones, transpose_b=True),
+        tf.matmul(all_ones, pred_return_ratio, transpose_b=True)
+    )
+
+    # Creates an N x N matrix containing every actual return ratio for each company subtracted with every other
+    # company By switching the order of the all_ones matricies and the actual prices, a negative sign is introduced
+    # When RELU is applied later, correct predictions will not affect loss while incorrect predictions will affect
+    # loss depending on how incorrect the prediction was
+    actual_dif = tf.math.subtract(
+        tf.matmul(all_ones, actual_return_ratio, transpose_b=True),
+        tf.matmul(actual_return_ratio, all_ones, transpose_b=True)
+    )
+
+    # Using the above two qualities, the algorithm can be punished for incorrectly calculating when a company is
+    # doing better than another company Reduces the mean across each dimension until only 1 value remains
+    rank_loss = tf.reduce_mean(
+        # Takes if a given value is >0, it is kept, otherwise, it becomes 0
+        tf.nn.relu(
+            # Multiplies all of the
+            tf.multiply(pred_dif, actual_dif)
+        )
+    )
+
+    loss = (tf.cast(1000, tf.float32) * rank_loss) + (mse)
+    # loss = (tf.cast(1, tf.float32) * rank_loss)
+
+    return loss
+
+# These are the third generation
+def rank_loss_correct_pred_rr(y_actual, y_pred):
+
+    # Calculate return ratio
+    pred_return_ratio = tf.math.divide(tf.math.subtract(y_pred[:, -1:None], y_actual[:, -2:-1]), y_actual[:, -2:-1])
+    actual_return_ratio = tf.math.divide(tf.math.subtract(y_actual[:, -1:None], y_actual[:, -2:-1]), y_actual[:, -2:-1])
+    mse = tf.keras.losses.mean_squared_error(pred_return_ratio, actual_return_ratio)
+
+    # Create an array of all_ones so that we can calculate all permutations of subtractions
+    all_ones = tf.ones([y_actual[:, -1:None].shape[0], 1], dtype=tf.float32)
+
+    # Creates a N x N matrix with every predicted return ratio for each company subtracted with every other
+    # company
+    pred_dif = tf.math.subtract(
+        tf.matmul(pred_return_ratio, all_ones, transpose_b=True),
+        tf.matmul(all_ones, pred_return_ratio, transpose_b=True)
+    )
+
+    # Creates an N x N matrix containing every actual return ratio for each company subtracted with every other
+    # company By switching the order of the all_ones matricies and the actual prices, a negative sign is introduced
+    # When RELU is applied later, correct predictions will not affect loss while incorrect predictions will affect
+    # loss depending on how incorrect the prediction was
+    actual_dif = tf.math.subtract(
+        tf.matmul(all_ones, actual_return_ratio, transpose_b=True),
+        tf.matmul(actual_return_ratio, all_ones, transpose_b=True)
+    )
+
+    # Using the above two qualities, the algorithm can be punished for incorrectly calculating when a company is
+    # doing better than another company Reduces the mean across each dimension until only 1 value remains
+    rank_loss = tf.reduce_mean(
+        # Takes if a given value is >0, it is kept, otherwise, it becomes 0
+        tf.nn.relu(
+            # Multiplies all of the
+            tf.multiply(pred_dif, actual_dif)
+        )
+    )
+
+    loss = (tf.cast(1000, tf.float32) * rank_loss) + (mse)
+    # loss = (tf.cast(1, tf.float32) * rank_loss)
+
+    return loss
+
+# These are the ones we've mainly used
+def rank_loss_correct_pred_return_sequences(y_actual, y_pred):
+
+    y_actual = tf.cast(y_actual, tf.float16)
+    y_pred = tf.cast(y_pred, tf.float16)
+
+    # Calculate return ratio
+    actual_return_ratio = tf.math.divide(tf.math.subtract(y_actual[:, 1:], y_actual[:, 0:-1]), y_actual[:, 0:-1])
+    pred_return_ratio = tf.math.divide(tf.math.subtract(y_pred[:, 1:], y_actual[:, 0:-1]), y_actual[:, 0:-1])
+    mse = tf.keras.losses.mean_squared_error(pred_return_ratio, actual_return_ratio)
+    mse = tf.reduce_mean(mse)
+
+    # tf.print(pred_return_ratio.dtype, output_stream=sys.stdout)
+
+    p = (tf.repeat(tf.expand_dims(pred_return_ratio, 2), pred_return_ratio.shape[0], axis=2))
+    pred_dif = (p - tf.transpose(p))
+
+    p = (tf.repeat(tf.expand_dims(actual_return_ratio, 2), actual_return_ratio.shape[0], axis=2))
+    actual_dif = -(p - tf.transpose(p))
+
+    # Calculate all the different (ri-rj) * (ri-rj)hat sets through time)
+    s = tf.multiply(pred_dif, actual_dif)
+    # Remove all negative values
+    s = tf.nn.relu(s)
+    # Average across time
+    s = tf.reduce_mean(s, 1)
+    # Average all values
+    s = tf.reduce_mean(s)
+
+    loss = (tf.cast(50000, tf.float16) * s) + mse
+    # loss = (tf.cast(1, tf.float32) * rank_loss)
+
+    return loss
+
 
 # Define a custom layer in Tensorflow 2.0 to implement a matrix multiplication
 # operation using the output of an LSTM layer and another given matrix
@@ -1179,5 +1304,3 @@ class TF_Models(Graph_Entities):
             return None
         with open(self.data_path + fr'/parsed_data.p', 'rb') as read:
             return pickle.load(read)
-
-tf.keras.layers.Dense()

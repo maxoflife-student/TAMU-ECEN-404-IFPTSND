@@ -840,7 +840,7 @@ class Graph_Predictions():
         # self.entities = temp
     # new and improved
     def generate_predictions(self, model_name, model_dir, past, future, new_dir, sliding_window,
-                             model_type='lstm', selected_time_step=-1, stop_at=None, batch_size=None):
+                             model_type='lstm',input_Adj_matrix=None, selected_time_step=-1, stop_at=None, batch_size=None):
 
         print(f"\nLoading Model: '{model_name}'")
 
@@ -888,8 +888,12 @@ class Graph_Predictions():
             if model_type == 'lstm':
                 prediction = model.predict(tf.constant(seeable), batch_size=batch_size)
             elif model_type == 'gcn':
-                prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix],
+                if input_Adj_matrix is None:
+                    prediction = model.predict([tf.constant(seeable), self.Normalized_Adjacency_Matrix],
                                            batch_size=batch_size)
+                else:
+                    prediction = model.predict([tf.constant(seeable), input_Adj_matrix],
+                                               batch_size=batch_size)
 
             # We only care about the first day prediction
             prediction = prediction[:, selected_time_step]
