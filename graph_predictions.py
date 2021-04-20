@@ -27,6 +27,7 @@ from sklearn.metrics import mean_squared_error
 import numpy as np
 import time
 import pandas as pd
+import copy
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -88,8 +89,8 @@ class Graph_Predictions():
         # Data saved in memory
         self.strategy_results = {}
 
-        # Load the files already in ./strategies
-        self.update_strats()
+        # # Load the files already in ./strategies
+        # self.update_strats()
 
         self.test_obj = None
 
@@ -1705,6 +1706,43 @@ class Graph_Predictions():
             "Best_Potential_Score": best_potential_score
         }
 
+        # Show Continuous Investment
+        rr_values = json_file_save['Return_Ratio_List']
+        investment = 10000
+        investment_values = []
+        for r in rr_values:
+            investment = investment * (1 + r)
+            investment_values.append(investment)
+
+        json_file_save['Investment_Value_List'] = investment_values
+
+        # Show Discontinious Investment
+        rr_values = json_file_save['Return_Ratio_List']
+        total = 10000
+        portfolio = []
+        for r in rr_values:
+            if total < 10000:
+                invest = total
+            else:
+                invest = 10000
+            # Spend the money
+            total = total - invest
+            # Multiply it by our choice
+            earnings = invest * (1 + r)
+            # Add it back to our total
+            total = total + earnings
+            # Append it to the list and go to the next day
+            portfolio.append(total)
+        json_file_save['Discontinuous_Investment_Value_List'] = portfolio
+
+        # Show Cumulative Return Ratio
+        final_total = json_file_save['Discontinuous_Investment_Value_List']
+        # Pull out the last value of the Discontinuous Investment Value List trading strategy.
+        final_total = final_total[-1]
+        # Add to the datablocks
+        json_file_save['Discontinuous_Cumulative_Return_Ratio'] = final_total / 10000
+
+
         # Add a folder to store the results
         try:
             os.mkdir(f'./{p_file_directory}')
@@ -1725,9 +1763,184 @@ class Graph_Predictions():
         with open(f'./{new_dir}/{p_file_name}.json', 'w') as file:
             json.dump(json_file_save, file, indent=1)
 
-        self.strategy_results['RR_' + p_file_name] = rr_list
-        # Save the current strategy results
-        self.save_results()
+        # self.strategy_results['RR_' + p_file_name] = rr_list
+        # # Save the current strategy results
+        # self.save_results()
+
+    def generate_prediction_results_avg(self, avg, p_file_name, p_file_directory, future, new_dir, model_type='lstm'):
+        # If the file name contains the file ending, remove it
+        p_file_name = p_file_name.split('.json')
+        p_file_name = p_file_name[0]
+
+        # Load in the prediction results as a dictionary
+        file = open(f'{p_file_directory}/{p_file_name}.json', 'r')
+        predictions_dict = json.load(file)
+
+        # Incase less than the total number of companies is being tested over
+        truncated_entities = self.entities[0:future.shape[0]]
+
+        predictions = [predictions_dict[c] for c in truncated_entities]
+
+        # Transpose for clarity, data is in the form (t, N)
+        predictions = np.array(predictions)
+        predictions = np.transpose(predictions)
+
+        # For debugging you can call this object after loading a file
+        self.test_obj = predictions
+
+        # Actual RR values given the predictions
+        rr_list = []
+
+        # Saves the company choices at each day
+        entity_choices_list = []; mse_list = []; mrr_list = []
+
+        # We start on day 1 to avoid needing the past data set for comparisons
+        # Might need to subtract 2 ?
+        for day in range(1, future.shape[1] - 1):
+            # The first day is 1, which is the day we've seen the past and the first day of the future
+            prediction_day = predictions[day, :]
+            # This is the most recent price we've used to formulate our prediction
+            seen_day = future[:, day-1, 0]
+
+            # Ensure that both variables are TF objects
+            prediction_day = tf.constant(prediction_day, dtype=tf.float32)
+            seen_day = tf.constant(seen_day, dtype=tf.float32)
+
+            prediction_day_rr = tf.divide(tf.subtract(prediction_day, seen_day), seen_day)
+
+            temp_predictions = prediction_day_rr.numpy()
+            top_choices = []
+            for i in range(avg):
+                best = np.argmax(temp_predictions)
+                top_choices.append(best)
+                temp_predictions[best] = -999
+
+            top_choices = [int(i) for i in top_choices]
+            entity_choices_list.append(top_choices)
+
+            # Calculate the actual return_ratio for the day
+            actual_rr = tf.divide(tf.subtract(future[:, day, 0], future[:, day - 1, 0]), future[:, day - 1, 0])
+            # Save the return ratio for the company we selected as top_choice
+            rr_from_choices = [actual_rr[i] for i in top_choices]
+            # Average them together since that's how we're splitting funding
+            rr_list.append(float(np.mean(rr_from_choices)))
+
+
+            # Calculate the MSE between the RR we predicted and the actual ones
+            mse_list.append(float(mean_squared_error(prediction_day_rr, actual_rr)))
+
+            # If we're taking an average that's larger than 95% of the set, don't even calculate MRR
+            # It will take an absurdly long time to calculate the average of the sum of integers from 1 to N,
+            # so instead we demonstrate the value here
+            if avg > future.shape[0] * 0.95:
+                # Needs to be a list of list because later this is compressed to a single value
+                mrr_list = [[(future.shape[0] + 1)/2]]
+            else:
+                # Calculate the rank of the stock choice we made on this day
+                master_pred = prediction_day_rr.numpy()
+                master_actual = actual_rr.numpy()
+
+                counts = []
+                starter = 1
+                for a in range(avg):
+                    # Calculate the rank of the stock choice we made on this day
+                    # temp_predictions = master_pred.numpy()
+                    temp_predictions = copy.deepcopy(master_pred)
+                    # temp_actual_rr = master_actual.numpy()
+                    temp_actual_rr = copy.deepcopy(master_actual)
+                    actual_top = np.argmax(temp_actual_rr)
+                    actual_bottom = np.argmin(temp_predictions)
+                    count = starter
+                    for i in range(len(temp_predictions)):
+                        inner_max = np.argmax(temp_predictions)
+                        if inner_max == actual_top:
+                            break
+                        else:
+                            count += 1
+                            temp_predictions[inner_max] = temp_predictions[actual_bottom] - 1
+                    counts.append(float(count))
+                    # Remove the current # 1 from both lists
+                    master_pred[actual_top] = temp_predictions[actual_bottom] - 1
+                    master_actual[actual_top] = temp_predictions[actual_bottom] - 1
+                    starter = starter + 1
+
+                mrr_list.append(counts)
+
+        # If you followed the predictions exactly each day, what is the overall return ratio?
+        rr_list_plus_1 = (np.array(rr_list) + 1)
+        cumulative_rr = float(np.prod(rr_list_plus_1))
+
+        # What percentage of the stocks did the algorithm actually use? Is it always picking the same one?
+        diversity_perc = float(len(set([item for sublist in entity_choices_list for item in sublist])) / future.shape[1])/avg
+
+        # What is the average error in calculating the next day return ratio?
+        avg_mse = float(np.mean(mse_list))
+
+        # What is the average reciprocal rank score? i.e. Where do we tend to rank the best choice?
+        avg_mrr = float(np.mean([item for sublist in mrr_list for item in sublist]))
+
+        # Using area under the curve, what percentage of perfect did this model accomplish?
+        avg_rr = np.mean(rr_list)
+
+
+        # What values need to be saved to file?
+        json_file_save = {
+            "Average_MRR": avg_mrr, "Average_MSE": avg_mse, "Average_RR": avg_rr, "Diversity_Percentage": diversity_perc,
+            "Cumulative_Return_Ratio": cumulative_rr, "MRR_List": mrr_list, "MSE_List": mse_list,
+            "Entity_Choices": entity_choices_list, "Return_Ratio_List": rr_list
+        }
+
+        # Show Continuous Investment
+        rr_values = json_file_save['Return_Ratio_List']
+        investment = 10000
+        investment_values = []
+        for r in rr_values:
+            investment = investment * (1 + r)
+            investment_values.append(investment)
+
+        json_file_save['Investment_Value_List'] = investment_values
+
+        # Show Discontinious Investment
+        rr_values = json_file_save['Return_Ratio_List']
+        total = 10000
+        portfolio = []
+        for r in rr_values:
+            if total < 10000:
+                invest = total
+            else:
+                invest = 10000
+            # Spend the money
+            total = total - invest
+            # Multiply it by our choice
+            earnings = invest * (1 + r)
+            # Add it back to our total
+            total = total + earnings
+            # Append it to the list and go to the next day
+            portfolio.append(total)
+        json_file_save['Discontinuous_Investment_Value_List'] = portfolio
+
+        # Show Cumulative Return Ratio
+        final_total = json_file_save['Discontinuous_Investment_Value_List']
+        # Pull out the last value of the Discontinuous Investment Value List trading strategy.
+        final_total = final_total[-1]
+        # Add to the datablocks
+        json_file_save['Discontinuous_Cumulative_Return_Ratio'] = final_total / 10000
+
+
+        # Add a folder to store the results
+        try:
+            os.mkdir(f'./{p_file_directory}')
+        except:
+            None
+
+        p_file_name = p_file_name + f'_DATABLOCK_{avg}AVG'
+
+        with open(f'./{new_dir}/{p_file_name}.json', 'w') as file:
+            json.dump(json_file_save, file, indent=1)
+
+        # self.strategy_results['RR_' + p_file_name] = rr_list
+        # # Save the current strategy results
+        # self.save_results()
 
     def generate_model_diagnostics_given_sets_close_gap(self, pm_name, predicting_set, name_override='', try_all_pred=False,
                                               datablock_folder='RL_validation_set', rr_labels=False):
@@ -2173,7 +2386,7 @@ class Graph_Predictions():
                             for i in range(len(d_obj)):
                                 # out = widgets.Output(layout={'border': '1px solid black', 'color': colors_list[i]})
                                 out = widgets.HTML(
-                                    value=f'<b>{"{:.3E}".format(temp_list[i][0])}</b>\t\t|\t<span style="color: '
+                                    value=f'<b>{"{:.3E}"(temp_list[i][0])}</b>\t\t|\t<span style="color: '
                                           f'{temp_list[i][1]}">{temp_list[i][2]}</span>')
                                 output_text.append(out)
                             # Place the HTML text into a vertically stretching box
@@ -2348,6 +2561,21 @@ class Graph_Predictions():
 
                 widgets.interact(display_figure, keys=keys)
 
+                for idx, f in enumerate(files):
+                    print(f)
+                    avg_mse = "{:.2e}".format(loaded_files[idx]['Average_MSE'])
+
+                    # Subtract 1 so that it's a return ratio
+                    irr = "{:.4f}".format(loaded_files[idx]["Discontinuous_Cumulative_Return_Ratio"]-1)
+                    # Just give us the main number
+                    mr = "{:.2f}".format(loaded_files[idx]["Average_MRR"])
+
+                    # Give us the percentage out of 100
+                    di = loaded_files[idx]['Diversity_Percentage'] * 100
+                    di = "{:.2f}".format(di)
+
+                    print(rf"NAME & {avg_mse} & {irr} & {mr} & {di}\% \\ \hline")
+
             #############################################################
             # List all files that are in the directory
             files = [f for f in os.listdir(directory) if f.endswith('.json')]
@@ -2364,6 +2592,7 @@ class Graph_Predictions():
 
             # Run the selected files through the key_value box
             widgets.interact(key_values, files=data_block_sel)
+
 
         #############################################################
         search_string = widgets.Text(

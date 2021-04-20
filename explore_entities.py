@@ -13,6 +13,7 @@ from bqplot import (
 
 import json
 import random
+import pickle
 
 # Some of the matrix multiplication will display run-time errors. They are not pretty for demonstration purposes
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
@@ -33,15 +34,27 @@ def return_idx(item, l):
 
 
 class Graph_Entities():
-    def __init__(self, data_path, reload=False, NAM=None, normal=True):
+    def __init__(self, data_path, reload=False, NAM=None, normal=True, parsed=False):
+
         # The directory where all the entities time_series CSV are stored
         self.data_path = data_path
-        self.entities, self.entities_idx = self._generate_list_of_entities(data_path)
-        self.relations_dict = self._generate_relations()
-        if normal:
-            self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+
+        # Variable for determining if this a normal circumstane or if the data needs to be loaded in via pickle
+        self.parsed = parsed
+        if self.parsed:
+            with open(data_path + '/parsed_data.p', 'rb') as p_file:
+                loaded_dict = pickle.load(p_file)
+                self.entities = loaded_dict['entities']
+                self.entities_idx = loaded_dict['entities_idx']
+                self.relations_dict = loaded_dict['relations_dict']
+                self.Normalized_Adjacency_Matrix = loaded_dict['Normalized_Adjacency_Matrix']
         else:
-            self.Normalized_Adjacency_Matrix = NAM
+            self.entities, self.entities_idx = self._generate_list_of_entities(data_path)
+            self.relations_dict = self._generate_relations()
+            if normal:
+                self.Normalized_Adjacency_Matrix = self._generate_normalized_ajacency_matrix()
+            else:
+                self.Normalized_Adjacency_Matrix = NAM
 
     '''Using the names of .csv files in the data_set directory, loads the entities as a list into memory'''
 
@@ -60,7 +73,7 @@ class Graph_Entities():
 
         if len(relation_file) == 1:
             # Load the relationship dictionary
-            with open(self.data_path + '\\' + relation_file[0]) as read_file:
+            with open(self.data_path + '/' + relation_file[0]) as read_file:
                 relations_dict = json.load(read_file)
                 return relations_dict
 
@@ -117,23 +130,22 @@ class Graph_Entities():
         # Only used for validation
         if random_nam_test:
             print('Randomized NAM Test:')
-            for i in range(len(RR_t)-1):
+            for i in range(len(RR_t) - 1):
                 print(i, end=' ')
-                for j in range(len(RR_t[0])-1):
-                    for k in range(len(RR_t[0][0])-1):
+                for j in range(len(RR_t[0]) - 1):
+                    for k in range(len(RR_t[0][0]) - 1):
                         # If j = k, then that 1 should be the self-relation
                         if RR_t[i][j][k] == 1 and j != k:
                             RR_t[i][j][k] = 0
-                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0]) - 1)] = 1
 
                             # Also add spontaneous chance to modify the matrix
                             if random.uniform(0, 1) < 0.01:
-                                random_relation = random.randint(0, len(RR_t[0][0])-1)
+                                random_relation = random.randint(0, len(RR_t[0][0]) - 1)
                                 if RR_t[i][j][random_relation] == 0:
                                     RR_t[i][j][random_relation] = 1
                                 else:
                                     RR_t[i][j][random_relation] = 0
-
 
         # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
@@ -183,8 +195,6 @@ class Graph_Entities():
         companies = self.entities
         new_industry_relations = self.relations_dict
 
-
-
         # Iterate through each company ticker and replace it with a tuple that contains its index and ticker
         for key, value in new_industry_relations.items():
             new_value = []
@@ -217,23 +227,22 @@ class Graph_Entities():
         # Only used for validation
         if random_nam_test:
             print('Randomized NAM Test:')
-            for i in range(len(RR_t)-1):
+            for i in range(len(RR_t) - 1):
                 print(i, end=' ')
-                for j in range(len(RR_t[0])-1):
-                    for k in range(len(RR_t[0][0])-1):
+                for j in range(len(RR_t[0]) - 1):
+                    for k in range(len(RR_t[0][0]) - 1):
                         # If j = k, then that 1 should be the self-relation
                         if RR_t[i][j][k] == 1 and j != k:
                             RR_t[i][j][k] = 0
-                            RR_t[i][j][random.randint(0, len(RR_t[0][0])-1)] = 1
+                            RR_t[i][j][random.randint(0, len(RR_t[0][0]) - 1)] = 1
 
                             # Also add spontaneous chance to modify the matrix
                             if random.uniform(0, 1) < 0.01:
-                                random_relation = random.randint(0, len(RR_t[0][0])-1)
+                                random_relation = random.randint(0, len(RR_t[0][0]) - 1)
                                 if RR_t[i][j][random_relation] == 0:
                                     RR_t[i][j][random_relation] = 1
                                 else:
                                     RR_t[i][j][random_relation] = 0
-
 
         # Create the proper structure to apply the matrix multiplication
         RR_tf = tf.constant(RR_t)
@@ -270,7 +279,6 @@ class Graph_Entities():
         loading_bar.close()
         RR_t = np.asarray(RR_t)
         return GCN_mat, ajacent, RR_t
-
 
     '''Returns a list of neighboring entities to the given an entity, includes the given entity'''
 
@@ -318,12 +326,12 @@ class Graph_Entities():
                 line_styles.append('dash_dotted')
 
         # There will always be one entity selected, so it sets the X-axis
-        ent_df = pd.read_csv(self.data_path + '\\' + self.sel_ent + ".csv")
+        ent_df = pd.read_csv(self.data_path + '/' + self.sel_ent + ".csv")
         x_data = list(range(len(ent_df[ent_df.columns[self.feature_key[self.sel_feature]]].values)))[
                  x_range[0]:x_range[1]]
 
         if not self.show_rel:
-            y_data = ent_df[ent_df.columns[self.feature_key[self.sel_feature]]].values
+            y_data = ent_df[ent_df.columns[self.feature_key[self.sel_feature]]].values[x_range[0]:x_range[1]]
         else:
             # Key names to be displayed
             keys = self._return_neighbors(self.sel_ent)
@@ -337,9 +345,9 @@ class Graph_Entities():
             keys.insert(0, self.sel_ent)
 
             # List of DataFrames containing all the entities related to each other
-            list_of_dfs = [pd.read_csv(self.data_path + '\\' + entity + ".csv") for entity in keys]
+            list_of_dfs = [pd.read_csv(self.data_path + '/' + entity + ".csv") for entity in keys]
             # List of values from those DataFrames
-            values = [df[df.columns[self.feature_key[self.sel_feature]]].values for df in list_of_dfs]
+            values = [df[df.columns[self.feature_key[self.sel_feature]]].values[x_range[0]:x_range[1]] for df in list_of_dfs]
 
         x_scale = LinearScale()
         y_scale = LinearScale()
@@ -389,7 +397,7 @@ class Graph_Entities():
                 num_of_neighbors = 0
 
             # Load in the data for the selected entity
-            ent_df = pd.read_csv(self.data_path + '\\' + self.sel_ent + ".csv")
+            ent_df = pd.read_csv(self.data_path + '/' + self.sel_ent + ".csv")
             # Create a dropdown menu to select which feature you would like to view
             ent_features = [f'{i}' for i in ent_df.columns]
 

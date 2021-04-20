@@ -398,7 +398,7 @@ def rank_loss_correct_pred_return_sequences(y_actual, y_pred):
     # Average all values
     s = tf.reduce_mean(s)
 
-    loss = (tf.cast(1000, tf.float16) * s) + mse
+    loss = (tf.cast(1, tf.float16) * s) + mse
     # loss = (tf.cast(1, tf.float32) * rank_loss)
 
     return loss
