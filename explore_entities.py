@@ -29,6 +29,7 @@ def return_idx(item, l):
         else:
             i += 1
     # If it's not in the list, then it's failed
+    print(item, l)
     raise IndexError('The item you passed was not within the list you provided')
     return None
 
@@ -199,7 +200,7 @@ class Graph_Entities():
         for key, value in new_industry_relations.items():
             new_value = []
             for v in value:
-                new_value.append((return_idx(v[1], companies), v))
+                new_value.append((return_idx(v, companies), v))
             new_industry_relations[key] = new_value
 
         # Iterate through each industry relationship and create an N x N adjacency matrix
