@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow import *
+import matplotlib.pyplot as plt
 
 from tensorflow import keras
 import tensorflow.keras.backend as kb
@@ -444,6 +445,7 @@ def rank_loss_gc(alpha):
 
     return rank_loss_correct_pred_return_sequences
 
+
 class Ein_Multiply(tf.keras.layers.Layer):
     def __init__(self, name=None, **kwargs):
         super(Ein_Multiply, self).__init__()
@@ -472,7 +474,7 @@ def leaky_relu(x):
 
 
 class TF_Models(Graph_Entities):
-    def __init__(self, data_path, models_path, reload=False, time_major=False, perc_split=[40,40,20]):
+    def __init__(self, data_path, models_path, reload=False, time_major=False, perc_split=[40, 40, 20]):
 
         self.time_major = time_major
 
@@ -758,9 +760,11 @@ class TF_Models(Graph_Entities):
 
         # Normalized Ajacency Matrix
         if gcn_shape:
+            self.using_gcn = True
             input_rel = keras.Input(shape=(self.Normalized_Adjacency_Matrix.shape[1],
                                            self.Normalized_Adjacency_Matrix.shape[2]))
-
+        else:
+            self.using_gcn = False
 
         # One LSTM layer with return sequences, One LSTM without return sequences, One Dense Layer: (None, 1)
         if model_type == 'lstm':
@@ -774,7 +778,8 @@ class TF_Models(Graph_Entities):
 
             do = 0
             # First LSTM Layer (Sequential)
-            x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=do, recurrent_dropout=do)(input_seq)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=do, recurrent_dropout=do)(
+                input_seq)
 
             # Weights Associated with input matrix
             y = tf.keras.layers.Dense(1, activation=activation)(input_rel)
@@ -1352,6 +1357,45 @@ class TF_Models(Graph_Entities):
         self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
 
         return self.model
+
+    def train(self, epochs=100, batch_size=22):
+
+        tf.config.run_functions_eagerly(True)
+
+        # Create a checkpoint for the best model from the validation set
+        checkpoint_filepath = './tmp/checkpoint'
+        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=checkpoint_filepath,
+            save_weights_only=True,
+            monitor='val_loss',
+            mode='min',
+            save_best_only=True)
+
+        inputs_train = [self.data_splits['x_train']]
+        train_labels = self.data_splits['y_train']
+
+        inputs_val = [self.data_splits['x_val']]
+        val_labels = self.data_splits['y_val']
+
+        # If we're using the GCN
+        if self.using_gcn:
+            inputs_train.append(self.Normalized_Adjacency_Matrix)
+            inputs_val.append(self.Normalized_Adjacency_Matrix)
+            # Can't use batches, must all be one operation
+            batch_size = inputs_train[0].shape[0]
+
+        history = self.model.fit(inputs_train, train_labels, batch_size=int(batch_size),
+                                 epochs=epochs, validation_data=(inputs_val, val_labels),
+                                 callbacks=[model_checkpoint_callback])
+
+        self.model.load_weights(checkpoint_filepath)
+
+        x_min = np.argmin(history.history['val_loss'])
+        y_min = np.min(history.history['val_loss'])
+        plt.plot(history.history['val_loss'])
+        plt.scatter(x_min, y_min, s=25, color='red')
+        plt.text(0, 0, f'Best Epoch: {x_min+1}    Val_loss: {"{:.2e}".format(y_min)}',
+                bbox={'facecolor': 'red', 'alpha': 0.5, 'pad': 1})
 
     '''Saves the model that is currently loaded to the specified directory. Tags can be given to the model and the
         filename utilizes the parameters from training and time of training to create the model name'''
