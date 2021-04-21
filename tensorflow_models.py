@@ -850,6 +850,9 @@ class TF_Models(Graph_Entities):
             # Final dense layer
             o = Dense(1, activation=activation)(w)
 
+            # We only care about 1 slice if we're outputting it
+            adj = adj[:,0,:]
+
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=[o, adj])
 
         # Two LSTM layers, One GCN Layer, One Dense Layer: (None, 1)

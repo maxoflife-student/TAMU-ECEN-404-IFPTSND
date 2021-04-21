@@ -24,10 +24,13 @@ import warnings
 import os
 from sklearn.metrics import mean_squared_error
 
+from scipy.special import softmax
+
 import numpy as np
 import time
 import pandas as pd
 import copy
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -842,25 +845,25 @@ class Graph_Predictions():
             json.dump(results, file, indent=1)
 
         # self.entities = temp
+
     # new and improved
     def generate_predictions(self, model_name, model_dir, past, future, new_dir, sliding_window,
                              model_type='lstm',input_Adj_matrix=None, selected_time_step=-1, stop_at=None, batch_size=None):
 
         print(f"\nLoading Model: '{model_name}'")
 
-        if model_name is not None:
-            # Specify which custom objects are neccesary to be loaded in with each model.
-            if model_type == 'lstm':
-                model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
-                                                   custom_objects={'leaky_relu': leaky_relu})
-            elif model_type == 'gcn':
-                model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
-                                                   custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
-            else:
-                input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
-                sys.exit()
+
+        # Specify which custom objects are neccesary to be loaded in with each model.
+        if model_type == 'lstm':
+            model = tf.keras.models.load_model(model_dir + f'{model_name}', compile=False,
+                                               custom_objects={'leaky_relu': leaky_relu})
+        elif model_type == 'gcn':
+            model = tf.keras.models.load_model(model_dir + f'{model_name}', compile=False,
+                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
         else:
-            model = self.model
+            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+            sys.exit()
+
 
         # Create a dictionary with entity keys where all entities are an empty list to be appended
         results = {}
@@ -899,6 +902,9 @@ class Graph_Predictions():
                 else:
                     prediction = model.predict([tf.constant(seeable), input_Adj_matrix],
                                                batch_size=batch_size)
+
+                # We only care about the output values, not the weight matrix so...
+                prediction = prediction[0]
 
             # We only care about the first day prediction
             prediction = prediction[:, selected_time_step]
@@ -2657,5 +2663,54 @@ class Graph_Predictions():
 
         json.dump(obj, open(f'{datablock_dir}/{datablock}', 'w'), indent=1)
 
+    def perturbate_sequential_model(self, model_name, model_dir, input_tensor):
 
+        model = tf.keras.models.load_model(model_dir + f'{model_name}', compile=False,
+                                           custom_objects={'leaky_relu': leaky_relu})
+
+        ents = input_tensor.shape[0]
+        time_s = int(input_tensor.shape[1] / 2)
+        feat = input_tensor.shape[2]
+
+        def data_gen():
+            while True:
+                x = np.random.rand(ents, time_s, feat)  # batch x time x features
+                yield x, x[:, :, 0] * x[:, :, 1] < 0.25
+
+        g = data_gen()
+        x = np.concatenate([next(g)[0] for _ in range(50)])  # Get a sample of data
+        orig_out = model.predict(x)
+        perturbations = []
+        for i in range(feat):  # iterate over the features
+            new_x = x.copy()
+            perturbation = np.random.normal(0.0, 0.2, size=new_x.shape[:2])
+            new_x[:, :, i] = new_x[:, :, i] + perturbation
+            perturbed_out = model.predict(new_x)
+            effect = ((orig_out - perturbed_out) ** 2).mean() ** 0.5
+            print(f'Feature {i}, perturbation effect: {effect:.4f}')
+            perturbations.append(effect)
+
+        plt.style.use('seaborn')
+        import matplotlib as mpl
+
+        mpl.rcParams['font.size'] = 14
+
+        # Pie chart, where the slices will be ordered and plotted counter-clockwise:
+        sizes = softmax(perturbations)
+        labels = [f'Feature-{i}' for i in range(len(sizes))]
+        # explode = (0, 0, 0, 0, 0)  # only "explode" the 2nd slice (i.e. 'Hogs')
+
+        fig1, ax1 = plt.subplots()
+        ax1.pie(sizes, labels=labels, autopct='%1.1f%%',
+                shadow=True, startangle=90)
+        # ax1.pie(sizes, autopct='%1.1f%%',
+        #         shadow=True, startangle=90)
+        ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+
+        for item in ([ax1.title, ax1.xaxis.label, ax1.yaxis.label]):
+            item.set_fontsize(14)
+
+        plt.show()
+
+        return perturbations
 
