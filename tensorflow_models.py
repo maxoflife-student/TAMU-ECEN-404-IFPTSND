@@ -409,7 +409,7 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 def rank_loss_gc(alpha):
     # These are the ones we've mainly used
-    def rank_loss_correct_pred_return_sequences(y_actual, y_pred):
+    def rank_loss(y_actual, y_pred):
         # tf.print(y_actual.shape, output_stream=sys.stdout)
 
         y_actual = tf.cast(y_actual, tf.float16)
@@ -443,7 +443,7 @@ def rank_loss_gc(alpha):
 
         return loss
 
-    return rank_loss_correct_pred_return_sequences
+    return rank_loss
 
 
 class Ein_Multiply(tf.keras.layers.Layer):
@@ -804,6 +804,50 @@ class TF_Models(Graph_Entities):
             w = tf.concat([x, w], axis=-1)
 
             # Let the features pass through a final dense layer
+            o = Dense(1, activation=activation)(w)
+
+            # We only care about 1 slice of the weight matricies (since they're all the same here)
+            adj = adj[:, 0, :]
+
+            self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=[o, adj])
+
+        elif model_type == 'implicit_gcn':
+
+            do = 0
+            # First LSTM Layer (Sequential)
+            x = LSTM(hidden_units, return_sequences=True, activation=activation, dropout=do, recurrent_dropout=do)(
+                input_seq)
+
+            # Weights Associated with input matrix
+            y = tf.keras.layers.Dense(1, activation=activation)(input_rel)
+            y = y[:, :, -1]
+
+            # Repeat y across the dimension of time
+            y = (tf.repeat(tf.expand_dims(y, 1), 495, axis=1))
+
+            # Create parameters for all entities
+            h_w = tf.keras.layers.Dense(1, activation=activation)(x)
+            t_w = tf.keras.layers.Dense(1, activation=activation)(x)
+            all_ones = tf.ones([self.Normalized_Adjacency_Matrix.shape[0], 1], dtype=tf.float32)
+
+            a = (tf.repeat(tf.expand_dims(h_w, 2), 881, axis=2))
+            a = a[:, :, :, -1]
+
+            b = (tf.repeat(tf.expand_dims(t_w, 2), 881, axis=2))
+            b = b[:, :, :, -1]
+            b = tf.transpose(b)
+
+            w = tf.add(
+                tf.add(a, b), y
+            )
+
+            adj = tf.nn.softmax(w, axis=0)
+
+            w = Ein_Multiply()([adj, x], "itj, jtk->itk")
+
+            w = tf.concat([x, w], axis=-1)
+
+            # Final dense layer
             o = Dense(1, activation=activation)(w)
 
             self.model = tf.keras.Model(inputs=[input_seq, input_rel], outputs=[o, adj])
@@ -1397,11 +1441,16 @@ class TF_Models(Graph_Entities):
         plt.text(0, 0, f'Best Epoch: {x_min+1}    Val_loss: {"{:.2e}".format(y_min)}',
                 bbox={'facecolor': 'red', 'alpha': 0.5, 'pad': 1})
 
+        self.date_t = datetime.datetime.now().strftime("%m-%d-%Y--%H--%M")
+        self.epochs_n = epochs
+
     '''Saves the model that is currently loaded to the specified directory. Tags can be given to the model and the
         filename utilizes the parameters from training and time of training to create the model name'''
 
     def save_model(self, tag=''):
-        self.model_name = f'{self.date_t}-{tag}-{self.epochs_n}Epochs-{self.loss_t}-Loss-{self.hidden_units}-HU-{self.tag_t}'
+        if tag == '':
+            tag = self.model_type
+        self.model_name = f'{self.date_t}-{tag}-{self.epochs_n}Epochs-{self.loss_t}-{self.hidden_units}HU-{self.tag_t}'
         self.model.save(self.models_path + f'/{self.model_name}')
         return self.model_name
 

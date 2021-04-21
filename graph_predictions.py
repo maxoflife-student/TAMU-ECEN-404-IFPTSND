@@ -48,16 +48,19 @@ def max_index(l, rank=0, mini=False):
 
 
 class Graph_Predictions():
-    def __init__(self, model_path, results_path, main_set_type, tensorflow_model_obj):
+    def __init__(self, model_path, tensorflow_model_obj):
         # Data that should be given to operate
         self.model_path = model_path
-        self.results_path = results_path
+        self.results_path = "./ignorable_data/strategies/RL_validation_strategies/"
         self.entities = tensorflow_model_obj.entities
         self.x_test = tensorflow_model_obj.data_splits['x_test']
         self.x_val = tensorflow_model_obj.data_splits['x_val']
         self.x_train = tensorflow_model_obj.data_splits['x_train']
         self.rr_test = tensorflow_model_obj.data_splits['rr_test']
         self.Normalized_Adjacency_Matrix = tensorflow_model_obj.Normalized_Adjacency_Matrix
+
+        # If the DMJ object contained a model, just pass it along
+        self.model = tensorflow_model_obj.model
 
         # Used to quickly recall the next file location for validating large sets
         self.model_name = None
@@ -66,19 +69,19 @@ class Graph_Predictions():
         self.increment = 5e4
         self.starting_investment = 2 * self.increment
 
-        self.working_set = None
-        if main_set_type == 'x_val':
-            self.working_set = self.x_val
-            # Temp while NAM is broken
-            self.working_rr = tensorflow_model_obj.data_splits['rr_val'][0:-1, :]
-        elif main_set_type == 'x_test':
-            self.working_set = self.x_test
-            # Temp while NAM is broken
-            self.working_rr = tensorflow_model_obj.data_splits['rr_test'][0:-1, :]
-        else:
-            os.error('The main_set_type must be specified')
-        self.num_entities = self.working_set.shape[0]
-        self.num_time_steps = self.working_set.shape[1]
+        # self.working_set = None
+        # if main_set_type == 'x_val':
+        #     self.working_set = self.x_val
+        #     # Temp while NAM is broken
+        #     self.working_rr = tensorflow_model_obj.data_splits['rr_val'][0:-1, :]
+        # elif main_set_type == 'x_test':
+        #     self.working_set = self.x_test
+        #     # Temp while NAM is broken
+        #     self.working_rr = tensorflow_model_obj.data_splits['rr_test'][0:-1, :]
+        # else:
+        #     os.error('The main_set_type must be specified')
+        # self.num_entities = self.working_set.shape[0]
+        # self.num_time_steps = self.working_set.shape[1]
 
         # To calculate MSE, YY_tf is needed from the tensorflow model
         self.YY_tf = tensorflow_model_obj.YY_tf
@@ -845,18 +848,19 @@ class Graph_Predictions():
 
         print(f"\nLoading Model: '{model_name}'")
 
-        # Specify which custom objects are neccesary to be loaded in with each model.
-        if model_type == 'lstm':
-            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
-                                               custom_objects={'leaky_relu': leaky_relu})
-        elif model_type == 'gcn':
-            model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
-                                               custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+        if model_name is not None:
+            # Specify which custom objects are neccesary to be loaded in with each model.
+            if model_type == 'lstm':
+                model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                                   custom_objects={'leaky_relu': leaky_relu})
+            elif model_type == 'gcn':
+                model = tf.keras.models.load_model(model_dir + f'/{model_name}', compile=False,
+                                                   custom_objects={'Ein_Multiply': Ein_Multiply, 'leaky_relu': leaky_relu})
+            else:
+                input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
+                sys.exit()
         else:
-            input('The model type you specified was not found, so custom_objects cannot be applied. Fix this.')
-            sys.exit()
-
-
+            model = self.model
 
         # Create a dictionary with entity keys where all entities are an empty list to be appended
         results = {}
@@ -918,6 +922,8 @@ class Graph_Predictions():
         results['future'] = list(future.shape)
 
         model_name = model_name + f"{sliding_window}win_{past.shape[1]}past_{future.shape[1]}fut"
+
+        self.most_recent_prediction_file = model_name
 
         with open(f'{new_dir}/{model_name}.json', 'w') as file:
             json.dump(results, file, indent=1)
