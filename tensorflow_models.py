@@ -758,6 +758,9 @@ class TF_Models(Graph_Entities):
             self.data_splits['x_train'].shape[1],
             self.data_splits['x_train'].shape[2]))
 
+        time_steps = self.data_splits['x_val'].shape[1]
+        ents = self.data_splits['x_val'].shape[0]
+
         # Normalized Ajacency Matrix
         if gcn_shape:
             self.using_gcn = True
@@ -786,7 +789,7 @@ class TF_Models(Graph_Entities):
             y = y[:, :, -1]
 
             # Repeat y across the dimension of time
-            y = (tf.repeat(tf.expand_dims(y, 1), 495, axis=1))
+            y = (tf.repeat(tf.expand_dims(y, 1), time_steps, axis=1))
 
             # Create similarity features between every company
             w = Ein_Multiply()([x, tf.transpose(x)], "itj, jtk->itk")
@@ -823,17 +826,17 @@ class TF_Models(Graph_Entities):
             y = y[:, :, -1]
 
             # Repeat y across the dimension of time
-            y = (tf.repeat(tf.expand_dims(y, 1), 495, axis=1))
+            y = (tf.repeat(tf.expand_dims(y, 1), time_steps, axis=1))
 
             # Create parameters for all entities
             h_w = tf.keras.layers.Dense(1, activation=activation)(x)
             t_w = tf.keras.layers.Dense(1, activation=activation)(x)
             all_ones = tf.ones([self.Normalized_Adjacency_Matrix.shape[0], 1], dtype=tf.float32)
 
-            a = (tf.repeat(tf.expand_dims(h_w, 2), 881, axis=2))
+            a = (tf.repeat(tf.expand_dims(h_w, 2), ents, axis=2))
             a = a[:, :, :, -1]
 
-            b = (tf.repeat(tf.expand_dims(t_w, 2), 881, axis=2))
+            b = (tf.repeat(tf.expand_dims(t_w, 2), ents, axis=2))
             b = b[:, :, :, -1]
             b = tf.transpose(b)
 

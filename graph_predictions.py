@@ -2665,6 +2665,15 @@ class Graph_Predictions():
 
     def perturbate_sequential_model(self, model_name, model_dir, input_tensor):
 
+        def sum_t(l):
+            s = 0
+            for i in l:
+                s = i + s
+            return s
+
+        def normalize(l):
+            return [i / sum_t(l) for i in l]
+
         model = tf.keras.models.load_model(model_dir + f'{model_name}', compile=False,
                                            custom_objects={'leaky_relu': leaky_relu})
 
@@ -2696,7 +2705,7 @@ class Graph_Predictions():
         mpl.rcParams['font.size'] = 14
 
         # Pie chart, where the slices will be ordered and plotted counter-clockwise:
-        sizes = softmax(perturbations)
+        sizes = normalize(perturbations)
         labels = [f'Feature-{i}' for i in range(len(sizes))]
         # explode = (0, 0, 0, 0, 0)  # only "explode" the 2nd slice (i.e. 'Hogs')
 
